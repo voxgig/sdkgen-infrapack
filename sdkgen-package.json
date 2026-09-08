@@ -1,0 +1,18 @@
+{
+  "sdkgen": {
+    "package": 1
+  },
+  "name": "@voxgig/sdkgen-infrapack",
+  "version": "1.0.0",
+  "engines": {
+    "sdkgen": ">=4.9.0"
+  },
+  "provides": {
+    "target": [
+      "seneca-provider"
+    ]
+  },
+  "parity": {
+    "seneca-provider": "CONSUMER"
+  }
+}

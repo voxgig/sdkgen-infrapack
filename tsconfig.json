@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "Type-check the target's components. They compile inside a CONSUMER",
+    "project, never as part of anything in this directory, so a missing import",
+    "or a renamed export is invisible without this and fatal there — it breaks",
+    "every generated Seneca provider.",
+    "",
+    "This is the same gate `check-scaffold` is for the bundled scaffold. It is",
+    "the FIRST thing a migrated target loses and the first it has to get back:",
+    "sdkgen's build no longer sees this tree at all.",
+    "",
+    "fragment/ is excluded: fragments are template source carrying placeholder",
+    "tokens, not valid standalone modules. This target ships none today; the",
+    "exclusion stays so adding one cannot break the lane."
+  ],
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "node16",
+    "moduleResolution": "node16",
+    "strict": false,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true
+  },
+  "include": [
+    ".sdk/src/cmp/**/*.ts"
+  ],
+  "exclude": [
+    ".sdk/src/cmp/**/fragment/**"
+  ]
+}

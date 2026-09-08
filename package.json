@@ -1,0 +1,90 @@
+{
+  "name": "@voxgig/sdkgen-infrapack",
+  "version": "1.0.0",
+  "description": "Infrastructure-provider targets for the Voxgig SDK Generator: Seneca provider.",
+  "type": "commonjs",
+  "license": "MIT",
+  "keywords": [
+    "voxgig",
+    "sdkgen",
+    "sdkgen-package",
+    "seneca",
+    "seneca-provider",
+    "provider"
+  ],
+  "author": "Richard Rodger (http://richardrodger.com)",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/voxgig/sdkgen-infrapack.git"
+  },
+  "files": [
+    ".sdk",
+    "sdkgen-package.json"
+  ],
+  "scripts": {
+    "check-cmp": "tsc -p tsconfig.json",
+    "check-package": "voxgig-sdkgen package check .",
+    "test": "npm run check-cmp && node --test test/*.test.js",
+    "build": "npm run check-cmp"
+  },
+  "_peer_comment": [
+    "A MIGRATED TARGET INHERITS SDKGEN'S PEERS AS ITS OWN. These components",
+    "import @voxgig/sdkgen and @voxgig/apidef BY NAME, which resolved silently",
+    "while the target lived in the bundled scaffold beside sdkgen's own",
+    "node_modules. Out here they have to be declared, or the components fail",
+    "to type-check for the author and fail to resolve for anyone who installs",
+    "this package without sdkgen's peers present.",
+    "",
+    "Peers rather than dependencies: a consumer necessarily has these already,",
+    "via sdkgen, and a second copy at a different version is the one outcome",
+    "worth preventing.",
+    "",
+    "NOT @seneca/maintain, AND NOT ANY OTHER SENECA PACKAGE. The migration",
+    "guide's candidate-check grep prints @seneca/maintain for this target, and",
+    "declaring it here would be wrong: the hit is inside the template literal",
+    "in Extras that WRITES the generated provider's test file. The Seneca",
+    "packages are dependencies of the generated provider, declared in",
+    ".sdk/model/target/seneca-provider.aon's `deps` block, and a consumer of",
+    "THIS package has no reason to supply any of them. The grep cannot tell an",
+    "import from an emitted string; expect that from any target generating a",
+    "Node package.",
+    "",
+    "No @voxgig/struct either \u2014 haskell needs it, this target does not.",
+    "",
+    "The apidef floor MATCHES SDKGEN'S OWN peer range rather than being",
+    "chosen here. A consumer satisfies this package through sdkgen, so a",
+    "looser range would only let npm resolve an apidef that sdkgen itself",
+    "rejects \u2014 a package that installs and then fails to generate.",
+    "",
+    "THE SDKGEN FLOOR IS THE OLDEST PUBLISHED VERSION THIS SUITE IS RUN",
+    "AGAINST, which is 4.9.0. Not the oldest that might work: a floor nobody",
+    "tests is the shape of the old >=3.5.0, which accepted versions where a",
+    "target's components install and then die at generation on a missing",
+    "export \u2014 this target calls `pointSegments`, which sdkgen first exported",
+    "in 4.8.0. 4.9.0 is also the first release carrying the test kit this",
+    "suite runs on.",
+    "",
+    "This is a SEPARATE REPOSITORY, so there is no `file:` path back to the",
+    "generator: the dependency is the published package, and that is the",
+    "point. It makes this package's CI the thing that catches an sdkgen",
+    "release breaking a packaged target.",
+    "",
+    "@types/node IS REQUIRED, not incidental: these components import",
+    "`node:path` and read `__dirname`. Inside the sdkgen checkout they",
+    "hoisted from the generator's own devDependencies; standing alone that",
+    "hoist is gone and the type-check lane fails."
+  ],
+  "peerDependencies": {
+    "@voxgig/apidef": ">=8.2.2",
+    "@voxgig/sdkgen": ">=4.9.0"
+  },
+  "devDependencies": {
+    "@voxgig/apidef": ">=8.2.2",
+    "@voxgig/sdkgen": ">=4.9.0",
+    "aontu": ">=0.52",
+    "memfs": "4.68.1",
+    "sucrase": "3.35.1",
+    "typescript": "7.0.2",
+    "@types/node": ">=24"
+  }
+}
