@@ -27,6 +27,7 @@ const Path = require('node:path')
 
 const { Aontu } = require('aontu')
 const { transform } = require('sucrase')
+const { Script } = require('node:vm')
 
 const { stageConsumer, generateInto } = require('@voxgig/sdkgen/testkit')
 
@@ -381,57 +382,86 @@ describe('seneca-provider target, from its package', () => {
   // `2fa_token`. Emitted bare, that is a syntax error everywhere the name is
   // used as an identifier rather than as a string.
   //
-  // WHAT THIS ASSERTS, AND WHAT IT DELIBERATELY DOES NOT.
+  // THIS TEST ASSERTS DIFFERENT THINGS AGAINST DIFFERENT SDKGENS, on purpose,
+  // and probes for which one it has rather than comparing versions — the same
+  // idiom as `outsideSupported` above.
   //
-  // It asserts the constructs THIS TARGET emits: the entity map's keys, the
-  // `entity.<name>.cmd.<op>.action` assignments, the SEED map's keys, and the
-  // live-parent local. Those are the provider's own, and they are escaped.
+  // sdkgen used to leave the name alone, and could not declare the accessor
+  // for it either: the `ts` target emitted `class 3dsSessionEntity`,
+  // `import { 3dsSessionEntity }` and `3dsSession(entopts?)`, all syntax
+  // errors. So this target escaped the constructs it owns — the entity map
+  // key, the `entity.<name>.cmd.<op>` assignments, the SEED keys — and
+  // deliberately left its `sdk.<Name>()` CALL unescaped, because escaping it
+  // in isolation would have turned a loud parse failure into a runtime "not a
+  // function" against a method the SDK never declared.
   //
-  // It does NOT assert that the whole generated file parses, because it does
-  // not — and the reason is upstream, not here. The provider calls the SDK
-  // accessor by the entity's PascalCase `Name` (`sdk.3dsSession()`), and the
-  // `ts` target cannot declare that accessor either: it emits
-  // `class 3dsSessionEntity`, `import { 3dsSessionEntity }` and
-  // `3dsSession(entopts?)`, all of which are syntax errors. Escaping the call
-  // here in isolation would be worse than the current state — it would turn a
-  // loud parse failure into a runtime "not a function" against a method the
-  // SDK never managed to declare. That is sdkgen's `Name` derivation to fix,
-  // across every target; when it lands, this test should become a whole-file
-  // parse check.
-  test('an entity whose name starts with a digit is escaped where this target emits it', async () => {
-    const { files, outside } = await generateInto(consumer, {
-      model: consumerModel(consumer.sdk, DIGIT_ENTITY),
-      outside: outsideSupported ? [OUT] : undefined,
+  // sdkgen now guards the name in the model before generation (voxgig/sdkgen
+  // #124), so `3ds_session` arrives here as `n3ds_session` and the accessor
+  // as `N3dsSession`. Every construct is then a legal identifier without this
+  // target escaping anything, the escapes become no-ops, and the whole file
+  // parses — which is the stronger claim, and the one the old comment here
+  // said to make once the fix landed.
+  test('an entity whose name starts with a digit generates a file that parses',
+    async () => {
+      // No `output: path` in this model, so the provider generates IN-TREE.
+      // Reading it out of `outside` because the KIT supports that option
+      // conflated two different things and silently found nothing.
+      const { files } = await generateInto(consumer, {
+        model: consumerModel(consumer.sdk, DIGIT_ENTITY),
+      })
+
+      const provider = Object.entries(files)
+        .find(([p]) => /src\/demo-provider\.ts$/.test(p))
+      ok(provider, 'no provider source generated:\n  ' +
+        Object.keys(files).join('\n  '))
+
+      const src = String(provider[1])
+      const suite = Object.entries(files)
+        .find(([p]) => /test\/.*\.test\.js$/.test(p))
+
+      // The probe: a guarding sdkgen renamed the entity before any component
+      // saw it, so the guarded name is what reaches the output.
+      const guarded = src.includes('n3ds_session')
+
+      if (guarded) {
+        // The whole file has to PARSE. That is the point of the upstream fix,
+        // and a parse check cannot be satisfied by escaping one construct and
+        // missing another.
+        transform(src, { transforms: ['typescript', 'imports'] })
+
+        // The accessor must be the name the SDK actually declares.
+        // `MainEntity_ts` declares the method as `${entity.Name}()`, and
+        // `acc` is `ent.Name`, so these agree by construction — assert it
+        // anyway, because a mismatch fails at runtime rather than at build.
+        ok(/sdk\.N3dsSession\(\)/.test(src),
+          'the SDK accessor is not the guarded PascalCase Name')
+        ok(!/sdk\.3dsSession\(\)/.test(src),
+          'an unguarded accessor survived')
+
+        if (suite) {
+          new Script(String(suite[1]))
+        }
+        return
+      }
+
+      // Pre-guard sdkgen: this target can only guarantee its own constructs.
+      // The file does NOT parse as a whole, and asserting that it does would
+      // be this package making a claim about another target.
+      ok(src.includes(`'3ds_session': {`) || src.includes(`"3ds_session": {`),
+        'the entity map key is not quoted')
+      for (const op of ['list', 'load', 'save', 'remove']) {
+        const bare = 'entity.3ds_session.cmd.' + op
+        ok(!src.includes(bare),
+          'a bare `' + bare + '` survived — that is a syntax error')
+      }
+      ok(/entity\[["']3ds_session["']\]\.cmd\.list\.action/.test(src),
+        'the list action is not assigned through a bracketed access')
+
+      if (suite) {
+        ok(!/^\s+3ds_session\d?: /m.test(String(suite[1])),
+          'a bare digit-leading key survived in the generated test SEED map')
+      }
     })
-
-    const emitted = outsideSupported ? outside[OUT] : files
-    const provider = Object.entries(emitted)
-      .find(([p]) => /src\/demo-provider\.ts$/.test(p))
-    ok(provider, 'no provider source generated:\n  ' +
-      Object.keys(emitted).join('\n  '))
-
-    const src = String(provider[1])
-
-    // The entity map key, and the four action assignments.
-    ok(src.includes(`'3ds_session': {`) || src.includes(`"3ds_session": {`),
-      'the entity map key is not quoted')
-    for (const op of ['list', 'load', 'save', 'remove']) {
-      const bare = 'entity.3ds_session.cmd.' + op
-      ok(!src.includes(bare),
-        'a bare `' + bare + '` survived — that is a syntax error')
-    }
-    ok(/entity\[["']3ds_session["']\]\.cmd\.list\.action/.test(src),
-      'the list action is not assigned through a bracketed access')
-
-    // The generated test file's SEED map and live-parent local.
-    const suite = Object.entries(emitted)
-      .find(([p]) => /test\/.*\.test\.js$/.test(p))
-    if (suite) {
-      const t = String(suite[1])
-      ok(!/^\s+3ds_session\d?: /m.test(t),
-        'a bare digit-leading key survived in the generated test SEED map')
-    }
-  })
 
 
   // `recordKey` — which param names the record itself.
