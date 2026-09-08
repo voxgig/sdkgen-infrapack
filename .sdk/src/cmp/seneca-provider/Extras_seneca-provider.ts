@@ -98,6 +98,23 @@ function liveParentsResolvable(provider: any, e: any): boolean {
 }
 
 
+// A DECLARED identifier derived from an entity name.
+//
+// apidef canonizes an entity name to `[A-Za-z_0-9]` — `canonize` strips
+// everything else, so hyphens and dots never reach the model and `a-b` and
+// `a_b` arrive as the same `a_b`. The one shape that survives and is NOT a
+// legal identifier is a LEADING DIGIT, which real resources produce:
+// `3ds-sessions` canonizes to `3ds_session`, `2fa-tokens` to `2fa_token`.
+//
+// A DECLARATION cannot be bracket-quoted the way a property access can — the
+// same constraint `guardName` in Main documents — so it is prefixed instead.
+// Only a leading digit is touched, so every ordinary entity keeps the name it
+// has always generated.
+function entVar(name: string, suffix = ''): string {
+  return /^[0-9]/.test(name) ? `e_${name}${suffix}` : `${name}${suffix}`
+}
+
+
 // The lines that fetch a live parent id per parent key, plus the guard that
 // skips when the server has no parent record to attach to. Empty for a
 // top-level entity.
@@ -108,7 +125,7 @@ function liveParentSetup(provider: any, e: any, ind: string): string {
 
   return e.parents.map((p: string) => {
     const pe = parentEntityFor(provider, e, p)
-    const pv = `${pe.name}Records`
+    const pv = entVar(pe.name, 'Records')
 
     return `${ind}  // ${e.name} records hang off ${pe.name} records, so the ${p} has to
 ${ind}  // come FROM THE SERVER. This database is not ours to seed.
@@ -312,12 +329,12 @@ const SEED = {
   entity: {
 `)
       each(provider.entities, (e: any) => {
-        Content(`    ${e.name}: {
+        Content(`    ${jsKey(e.name)}: {
 `)
         each([0, 1], (i: any) => {
           const idx = Number(i.val$ ?? i)
           const rec = seedRecord(e, idx)
-          Content(`      ${e.name}${idx}: ${JSON.stringify(rec)},
+          Content(`      ${jsKey(e.name + idx)}: ${JSON.stringify(rec)},
 `)
         })
         Content(`    },

@@ -756,7 +756,7 @@ function ${provider.pluginName}(this: any, options: ${provider.pluginName}Option
       Content(`  const entity: any = {
 `)
       each(provider.entities, (e: any) => {
-        Content(`    ${e.name}: {
+        Content(`    ${jsKey(e.name)}: {
       cmd: {
 `)
         each(e.cmds, (cmd: any) => {
@@ -811,7 +811,7 @@ function ${provider.pluginName}(this: any, options: ${provider.pluginName}Option
 
         if (e.cmds.includes('list')) {
           Content(`
-  entity.${e.name}.cmd.list.action =
+  ${jsProp('entity', e.name)}.cmd.list.action =
     async function list_${e.name}(this: any, entize: any, msg: any) {
       const q = cleanq(msg.q)
 ${guard('list', 'q')}      const list = await this.shared.sdk.${e.acc}().list(q)
@@ -823,7 +823,7 @@ ${guard('list', 'q')}      const list = await this.shared.sdk.${e.acc}().list(q)
 
         if (e.cmds.includes('load')) {
           Content(`
-  entity.${e.name}.cmd.load.action =
+  ${jsProp('entity', e.name)}.cmd.load.action =
     async function load_${e.name}(this: any, entize: any, msg: any) {
       const q = cleanq(msg.q)
 ${guard('load', 'q')}      const res = await ornull(() => this.shared.sdk.${e.acc}().load(${sdkArg('load')}))
@@ -860,7 +860,7 @@ ${guard('load', 'q')}      const res = await ornull(() => this.shared.sdk.${e.ac
 `
 
           Content(`
-  entity.${e.name}.cmd.save.action =
+  ${jsProp('entity', e.name)}.cmd.save.action =
     async function save_${e.name}(this: any, entize: any, msg: any) {
       const data = msg.ent.data$(false)
 ${guard('save', 'data')}${alias}      const sdk = this.shared.sdk
@@ -875,7 +875,7 @@ ${body}
 
         if (e.cmds.includes('remove')) {
           Content(`
-  entity.${e.name}.cmd.remove.action =
+  ${jsProp('entity', e.name)}.cmd.remove.action =
     async function remove_${e.name}(this: any, _entize: any, msg: any) {
       const q = cleanq(msg.q)
 ${guard('remove', 'q')}      await ornull(() => this.shared.sdk.${e.acc}().remove(${sdkArg('remove')}))

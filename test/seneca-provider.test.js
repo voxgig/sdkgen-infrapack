@@ -127,6 +127,41 @@ main: kit: flow: BasicPlanetFlow: {
 `
 
 
+// A second entity whose name leads with a digit — what apidef produces for a
+// resource like `/3ds-sessions`.
+const DIGIT_ENTITY = `
+main: kit: entity: '3ds_session': {
+  alias: field: {}
+  name: "3ds_session"
+  id: { field: "id", name: "id" }
+  field: {
+    id: { name: "id", kind: "field", type: "\`$STRING\`", required: true }
+  }
+  fields: [ { name: "id", req: true, type: "\`$STRING\`" } ]
+  op: {
+    list: { name: "list", points: [ {
+      args: {}, method: "GET", orig: "/3ds-session", segments: [{ lit: "3ds-session" }]
+      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    load: { name: "load", points: [ {
+      args: { params: [
+        { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "s01" }
+      ] }
+      method: "GET", orig: "/3ds-session/{id}", segments: [{ lit: "3ds-session" }, { var: "id" }]
+      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+  }
+}
+
+main: kit: flow: Basic3dsSessionFlow: {
+  entity: "3ds_session", kind: "basic", name: "Basic3dsSessionFlow"
+  step: [
+    { op: "list" }
+    { op: "load", input: {
+        ref: "3ds_session_ref01", srcdatavar: "3ds_session_ref01_data", suffix: "_dt0" } }
+  ]
+}
+`
+
+
 function consumerModel(sdk, extra) {
   const src = [
     '@"@voxgig/apidef/model/apidef.aon"',
@@ -335,6 +370,67 @@ describe('seneca-provider target, from its package', () => {
 
     ok(0 < named.length,
       'the declared path back to the SDK project reached no generated file')
+  })
+
+
+  // AN ENTITY NAME THAT IS NOT A JAVASCRIPT IDENTIFIER.
+  //
+  // apidef canonizes an entity name to `[A-Za-z_0-9]`, so hyphens and dots
+  // never reach the model — but a LEADING DIGIT does, and real resources
+  // produce one: `3ds-sessions` canonizes to `3ds_session`, `2fa-tokens` to
+  // `2fa_token`. Emitted bare, that is a syntax error everywhere the name is
+  // used as an identifier rather than as a string.
+  //
+  // WHAT THIS ASSERTS, AND WHAT IT DELIBERATELY DOES NOT.
+  //
+  // It asserts the constructs THIS TARGET emits: the entity map's keys, the
+  // `entity.<name>.cmd.<op>.action` assignments, the SEED map's keys, and the
+  // live-parent local. Those are the provider's own, and they are escaped.
+  //
+  // It does NOT assert that the whole generated file parses, because it does
+  // not — and the reason is upstream, not here. The provider calls the SDK
+  // accessor by the entity's PascalCase `Name` (`sdk.3dsSession()`), and the
+  // `ts` target cannot declare that accessor either: it emits
+  // `class 3dsSessionEntity`, `import { 3dsSessionEntity }` and
+  // `3dsSession(entopts?)`, all of which are syntax errors. Escaping the call
+  // here in isolation would be worse than the current state — it would turn a
+  // loud parse failure into a runtime "not a function" against a method the
+  // SDK never managed to declare. That is sdkgen's `Name` derivation to fix,
+  // across every target; when it lands, this test should become a whole-file
+  // parse check.
+  test('an entity whose name starts with a digit is escaped where this target emits it', async () => {
+    const { files, outside } = await generateInto(consumer, {
+      model: consumerModel(consumer.sdk, DIGIT_ENTITY),
+      outside: outsideSupported ? [OUT] : undefined,
+    })
+
+    const emitted = outsideSupported ? outside[OUT] : files
+    const provider = Object.entries(emitted)
+      .find(([p]) => /src\/demo-provider\.ts$/.test(p))
+    ok(provider, 'no provider source generated:\n  ' +
+      Object.keys(emitted).join('\n  '))
+
+    const src = String(provider[1])
+
+    // The entity map key, and the four action assignments.
+    ok(src.includes(`'3ds_session': {`) || src.includes(`"3ds_session": {`),
+      'the entity map key is not quoted')
+    for (const op of ['list', 'load', 'save', 'remove']) {
+      const bare = 'entity.3ds_session.cmd.' + op
+      ok(!src.includes(bare),
+        'a bare `' + bare + '` survived — that is a syntax error')
+    }
+    ok(/entity\[["']3ds_session["']\]\.cmd\.list\.action/.test(src),
+      'the list action is not assigned through a bracketed access')
+
+    // The generated test file's SEED map and live-parent local.
+    const suite = Object.entries(emitted)
+      .find(([p]) => /test\/.*\.test\.js$/.test(p))
+    if (suite) {
+      const t = String(suite[1])
+      ok(!/^\s+3ds_session\d?: /m.test(t),
+        'a bare digit-leading key survived in the generated test SEED map')
+    }
   })
 
 
