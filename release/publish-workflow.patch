@@ -1,9 +1,9 @@
 diff --git a/.github/workflows/publish.yml b/.github/workflows/publish.yml
 new file mode 100644
-index 0000000..944f97a
+index 0000000..8af631e
 --- /dev/null
 +++ b/.github/workflows/publish.yml
-@@ -0,0 +1,362 @@
+@@ -0,0 +1,367 @@
 +# Releases @voxgig/sdkgen-infrapack: verifies, publishes to npm, then writes the git tag.
 +#
 +# ONE FILE, BECAUSE NPM ALLOWS EXACTLY ONE. A trusted publisher is registered
@@ -141,8 +141,13 @@ index 0000000..944f97a
 +      - name: The released commit must be on main
 +        run: |
 +          set -euo pipefail
-+          git fetch --no-tags --depth=0 origin main
-+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
++          # FETCH_HEAD, not origin/main: `--depth=0` is not a thing (git
++          # rejects it -- only the checkout action spells "full history" that
++          # way), and on a TAG build the checked-out ref is the tag, so a
++          # remote-tracking origin/main need not exist at all. FETCH_HEAD is
++          # what the fetch just wrote, on both paths.
++          git fetch --no-tags origin main
++          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
 +            echo "::error::$GITHUB_SHA is not contained in origin/main; refusing to release it"
 +            exit 1
 +          fi
