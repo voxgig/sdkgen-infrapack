@@ -1,37 +1,50 @@
 diff --git a/.github/workflows/publish.yml b/.github/workflows/publish.yml
 new file mode 100644
-index 0000000..de9d793
+index 0000000..f7a0422
 --- /dev/null
 +++ b/.github/workflows/publish.yml
-@@ -0,0 +1,268 @@
-+# Releases @voxgig/sdkgen-infrapack: publishes to npm AND writes the git tag.
+@@ -0,0 +1,355 @@
++# Releases @voxgig/sdkgen-infrapack: verifies, publishes to npm, then writes the git tag.
 +#
 +# ONE FILE, BECAUSE NPM ALLOWS EXACTLY ONE. A trusted publisher is registered
 +# on npmjs.com against a single workflow FILENAME, so anything that must
-+# accompany a publish has to live inside it. Here that is the tag.
++# accompany a publish has to live inside it. Here that is the verification and
++# the tag.
 +#
-+# A second workflow cannot publish whatever permissions it holds; npm rejects
-+# the exchange and reports it as a 404, not a 403, so as not to leak whether
-+# the package exists.
++# THREE JOBS, BECAUSE THEY NEED DIFFERENT PRIVILEGES. Each holds the least it
++# can, and no job holds a credential while running code it did not write.
 +#
-+# TWO JOBS, BECAUSE THEY NEED DIFFERENT PRIVILEGES.
-+#
-+#   publish  id-token: write, contents: READ. Runs npm install, the build and
-+#            the tests -- i.e. dependency lifecycle scripts and project code.
++#   verify   contents: read, and NOTHING else. Runs npm install, the build,
++#            the tests and the package gate -- i.e. dependency lifecycle
++#            scripts and project code. It has no publish credential to steal
++#            and no repository write.
++#   publish  id-token: write, contents: read. Installs NO project
++#            dependencies and runs NO project code: this package ships pure
++#            source (`files` is .sdk + the manifest, and the build is
++#            `noEmit`), so nothing needs building to pack.
 +#   tag      contents: write. Runs git and nothing else.
 +#
-+# Keeping them in one job would hand a repository-write credential to every
-+# dependency postinstall script that runs during the install, because checkout
-+# persists its token into the git config for the whole job.
++# THE SPLIT IS THE POINT. A compromised dependency lifecycle script can ask
++# the runner for any OIDC token the JOB is permitted to mint -- so a job that
++# both installs dependencies and holds `id-token: write` can be made to
++# publish as this package before its own gates finish. Keeping the install in
++# a job with no id-token, and the credential in a job that installs nothing,
++# is what makes the isolation real rather than nominal. The same reasoning
++# keeps `contents: write` out of both: checkout persists its token into the
++# git config for the whole job.
 +#
 +# A ref pushed with GITHUB_TOKEN does NOT start another workflow run, so the
 +# tag job cannot be replaced by "tag and let the publisher fire on it".
 +#
-+# TWO WAYS IN:
++# TWO WAYS IN, AND BOTH MUST COME FROM main:
 +#
 +#   workflow_dispatch  the normal path. Publishes what is missing, then tags.
 +#   push: tags v*      the manual path, for a tag pushed by hand. Publishes
 +#                      only; the tag job does not run.
++#
++# A tag can be pushed from ANY commit, so the tag path is not self-limiting:
++# without the containment check below, pushing a matching v* tag from an
++# unmerged branch would publish unreviewed code irreversibly.
 +#
 +# VERSION BUMPS ARE NOT AUTOMATED, deliberately. Nothing here commits. It
 +# reads the version already on the branch and releases exactly that, so the
@@ -39,8 +52,10 @@ index 0000000..de9d793
 +#
 +#   package.json "version"  ->  tag v<version>
 +#
-+# This repo commits NO lockfile, so the install is `npm install`, not
-+# `npm ci`.
++# package.json and sdkgen-package.json BOTH carry a version and both ship.
++# Nothing else compares them -- `package check` does not -- so this does.
++#
++# This repo commits NO lockfile, so the install is `npm install`, not `npm ci`.
 +#
 +# Renaming this file breaks publishing until the npm-side trusted publisher is
 +# updated to match.
@@ -61,15 +76,13 @@ index 0000000..de9d793
 +  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 +
 +jobs:
-+  publish:
-+    name: npm publish
++  verify:
++    name: verify
 +    runs-on: ubuntu-latest
 +    timeout-minutes: 20
 +
-+    # Deliberately NOT contents: write -- see the header. This job runs
-+    # dependency lifecycle scripts.
++    # Deliberately the default-minimum. This job runs third-party code.
 +    permissions:
-+      id-token: write
 +      contents: read
 +
 +    outputs:
@@ -83,14 +96,22 @@ index 0000000..de9d793
 +      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
 +        with:
 +          node-version: 24.x
-+          registry-url: 'https://registry.npmjs.org'
 +
-+      - name: Resolve the version being released
++      - name: Resolve the version, and check both manifests agree
 +        id: versions
 +        run: |
 +          set -euo pipefail
 +          VERSION="$(node -p "require('./package.json').version")"
++          SDKVER="$(node -p "require('./sdkgen-package.json').version")"
 +          test -n "$VERSION" || { echo "::error::could not read package.json version"; exit 1; }
++
++          # Both files ship, and a release bumping only one leaves consumers
++          # with conflicting metadata. No other gate compares them.
++          if [ "$VERSION" != "$SDKVER" ]; then
++            echo "::error::package.json is $VERSION but sdkgen-package.json is $SDKVER -- bump both"
++            exit 1
++          fi
++
 +          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 +          echo "$VERSION -> tag v$VERSION"
 +
@@ -105,6 +126,20 @@ index 0000000..de9d793
 +            echo "::error::dispatch ref is $GITHUB_REF_NAME; releases must come from main"
 +            exit 1
 +          fi
++
++      # ...AND SO DOES THE TAG PATH. A tag names any commit its pusher likes,
++      # so matching package.json is not enough: an unmerged commit carrying a
++      # bumped version would otherwise publish. Containment is the invariant,
++      # checked the same way for both entry points.
++      - name: The released commit must be on main
++        run: |
++          set -euo pipefail
++          git fetch --no-tags --depth=0 origin main
++          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
++            echo "::error::$GITHUB_SHA is not contained in origin/main; refusing to release it"
++            exit 1
++          fi
++          echo "$GITHUB_SHA is on main"
 +
 +      # main is a MUTABLE branch: between deciding to release and this run
 +      # resolving, another commit can land and be released under the version
@@ -150,7 +185,7 @@ index 0000000..de9d793
 +          HEAD_SHA="$(git rev-parse HEAD)"
 +          AT="$(git rev-parse -q --verify "refs/tags/$TAG^{commit}" 2>/dev/null || true)"
 +          if [ -n "$AT" ] && [ "$AT" != "$HEAD_SHA" ]; then
-+            echo "::error::tag $TAG already exists on $AT, not this commit -- bump package.json"
++            echo "::error::tag $TAG already exists on $AT, not this commit -- bump the version"
 +            exit 1
 +          fi
 +          if [ -n "$AT" ]; then
@@ -168,7 +203,28 @@ index 0000000..de9d793
 +      - name: Check the package manifest
 +        run: npm run check-package
 +
-+      # Trusted publishing requires npm >= 11.5.1.
++  publish:
++    name: npm publish
++    needs: verify
++    runs-on: ubuntu-latest
++    timeout-minutes: 15
++
++    # The ONLY job holding the publish credential -- and it installs no
++    # project dependencies and runs no project code. See the header.
++    permissions:
++      id-token: write
++      contents: read
++
++    steps:
++      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
++
++      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
++        with:
++          node-version: 24.x
++          registry-url: 'https://registry.npmjs.org'
++
++      # Trusted publishing requires npm >= 11.5.1. This is npm itself, not a
++      # project dependency: no package.json here is consulted.
 +      - name: Use a trusted-publishing capable npm
 +        run: npm install -g npm@latest
 +
@@ -179,7 +235,7 @@ index 0000000..de9d793
 +      - name: Is this version already on npm?
 +        id: registry
 +        env:
-+          VERSION: ${{ steps.versions.outputs.version }}
++          VERSION: ${{ needs.verify.outputs.version }}
 +        run: |
 +          set -euo pipefail
 +          if npm view "@voxgig/sdkgen-infrapack@$VERSION" version >/dev/null 2>&1; then
@@ -198,7 +254,7 @@ index 0000000..de9d793
 +      - name: A published version must come from this commit
 +        if: ${{ steps.registry.outputs.published == 'true' }}
 +        env:
-+          VERSION: ${{ steps.versions.outputs.version }}
++          VERSION: ${{ needs.verify.outputs.version }}
 +        run: |
 +          set -euo pipefail
 +          GH="$(npm view "@voxgig/sdkgen-infrapack@$VERSION" gitHead 2>/dev/null || true)"
@@ -211,6 +267,43 @@ index 0000000..de9d793
 +            echo "$VERSION on npm was built from this commit"
 +          fi
 +
++      # CHOOSING THE DIST-TAG IS NOT "STABLE MEANS latest".
++      #
++      # A prerelease must never become `latest`: `npm publish` defaults there,
++      # so 1.2.3-beta.1 published that way reaches every unpinned install.
++      #
++      # Nor may an OLDER stable take it. Publishing a historical tag, or two
++      # dispatches finishing out of order, would otherwise move `latest`
++      # BACKWARD and hand unpinned installs the older release. So a stable
++      # version claims `latest` only if it is the newest stable there is.
++      - name: Choose the dist-tag
++        id: disttag
++        if: ${{ steps.registry.outputs.published == 'false' }}
++        env:
++          VERSION: ${{ needs.verify.outputs.version }}
++        run: |
++          set -euo pipefail
++          case "$VERSION" in
++            *-*)
++              DIST=next
++              echo "$VERSION is a prerelease -> $DIST"
++              ;;
++            *)
++              CURRENT="$(npm view "@voxgig/sdkgen-infrapack@latest" version 2>/dev/null || true)"
++              if [ -z "$CURRENT" ]; then
++                DIST=latest
++                echo "no current latest -> $DIST"
++              elif [ "$(printf '%s\n%s\n' "$CURRENT" "$VERSION" | sort -V | tail -1)" = "$VERSION" ]; then
++                DIST=latest
++                echo "$VERSION >= current latest $CURRENT -> $DIST"
++              else
++                DIST=previous
++                echo "$VERSION is older than current latest $CURRENT -> $DIST (latest is left alone)"
++              fi
++              ;;
++          esac
++          echo "dist=$DIST" >> "$GITHUB_OUTPUT"
++
 +      # Publish BEFORE tagging (the tag job `needs` this one), so a tag only
 +      # ever exists for a release that reached the registry.
 +      #
@@ -219,16 +312,10 @@ index 0000000..de9d793
 +      - name: Publish to npm
 +        if: ${{ steps.registry.outputs.published == 'false' }}
 +        env:
-+          VERSION: ${{ steps.versions.outputs.version }}
++          VERSION: ${{ needs.verify.outputs.version }}
++          DIST: ${{ steps.disttag.outputs.dist }}
 +        run: |
 +          set -euo pipefail
-+          # A PRERELEASE MUST NOT BECOME `latest`. `npm publish` defaults to
-+          # the latest dist-tag, so publishing 1.2.3-beta.1 that way hands it
-+          # to every unpinned install.
-+          case "$VERSION" in
-+            *-*) DIST=next ;;
-+            *)   DIST=latest ;;
-+          esac
 +          echo "publishing $VERSION under dist-tag $DIST"
 +          npm publish --access public --tag "$DIST"
 +
@@ -236,7 +323,7 @@ index 0000000..de9d793
 +  # repository-write credential is never in scope while third-party code runs.
 +  tag:
 +    name: tag
-+    needs: publish
++    needs: [verify, publish]
 +    if: ${{ github.event_name == 'workflow_dispatch' }}
 +    runs-on: ubuntu-latest
 +    timeout-minutes: 10
@@ -251,14 +338,14 @@ index 0000000..de9d793
 +
 +      - name: Tag the release
 +        env:
-+          VERSION: ${{ needs.publish.outputs.version }}
++          VERSION: ${{ needs.verify.outputs.version }}
 +        run: |
 +          set -euo pipefail
 +          TAG="v$VERSION"
 +          HEAD_SHA="$(git rev-parse HEAD)"
 +
 +          # EXISTENCE IS NOT ENOUGH. `--verify` only asks whether the name
-+          # resolves; a tag created between the publish job's guard and this
++          # resolves; a tag created between the verify job's guard and this
 +          # checkout could point anywhere.
 +          AT="$(git rev-parse -q --verify "refs/tags/$TAG^{commit}" 2>/dev/null || true)"
 +          if [ -n "$AT" ]; then
