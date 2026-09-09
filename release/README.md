@@ -1,9 +1,12 @@
 # Releasing @voxgig/sdkgen-infrapack
 
-This package has never been published, and this repository has no release
-workflow. That is the gap this directory closes.
+**This bootstrap is COMPLETE — kept as the record of how, not as a to-do.**
+The workflow is applied, the trusted publisher is registered, and the
+registry carries releases. Steps 1 and 2 below are done; step 3 is the one
+you want for an ordinary release.
 
-`publish-workflow.patch` adds `.github/workflows/publish.yml`.
+`publish-workflow.patch` is the patch that added
+`.github/workflows/publish.yml`, retained so the diff stays reviewable.
 
 ## Why a patch and not the file
 
@@ -25,7 +28,7 @@ introduced it.
 
 ## Bootstrap: the FIRST release cannot use this workflow
 
-`@voxgig/sdkgen-infrapack` is not on the registry, and that ordering matters more than it looks.
+This is why `0.0.1` was published by hand, and the ordering matters more than it looks.
 
 **npm only exposes the trusted-publisher settings once a version already
 exists.** There is nothing to register against until the package is there, so
@@ -62,8 +65,25 @@ later run of the workflow assumes they do.
 
 ### 2. Register the trusted publisher
 
-On npmjs.com, for this package, against this repository and this exact
-workflow filename:
+**npm 12 added a CLI for this**, so it is one command rather than a trip
+through the website:
+
+```sh
+npm install -g npm@latest          # `npm trust` does not exist before 12
+npm login
+
+npm trust github @voxgig/sdkgen-infrapack \
+  --repo voxgig/sdkgen-infrapack --file publish.yml --allow-publish
+```
+
+`--file` is required and is the workflow's filename within
+`.github/workflows/`. So is a permission flag — without `--allow-publish`
+(or `--allow-stage-publish`) npm refuses with *"At least one permission flag
+is required"*. Check it with `npm trust list @voxgig/sdkgen-infrapack`;
+`npm trust revoke` undoes it.
+
+The equivalent website route still exists, for npm < 12 or if you prefer it:
+npmjs.com → the package → trusted publisher, with these fields.
 
 | field | value |
 | --- | --- |
@@ -73,6 +93,18 @@ workflow filename:
 
 Renaming the workflow file breaks publishing until the npm-side registration
 is updated to match.
+
+**A version being on the registry does NOT mean a publisher is registered
+against it.** These are two separate steps, and skipping this one fails at
+the very end of an otherwise green run:
+
+```
+npm error 404 Not Found - PUT https://registry.npmjs.org/@voxgig%2fsdkgen-infrapack
+```
+
+That 404 is npm's answer for "no trusted publisher matches this workflow" —
+deliberately not a 403, so as not to leak whether the package exists. It cost
+this repository a failed dispatch before anyone thought to check.
 
 ### 3. Every release after that is the workflow
 
