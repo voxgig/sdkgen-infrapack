@@ -617,6 +617,125 @@ describe('${provider.fileBase}', () => {
         }
       })
 
+
+      // ACTIONS — the `action$` directive.
+      //
+      // The test that matters most is the NEGATIVE one. A name this entity
+      // does not have must throw, because the alternative is that the plugin
+      // ignores the key and performs an ordinary save: a call that succeeds,
+      // reports success, and did something else. That is exactly how GitHub's
+      // `merge` reached its provider as an "update" — the endpoint existed,
+      // the plugin had no way to name it, and nothing said so.
+      //
+      // Generated for EVERY entity, whether it has actions or not: an entity
+      // with none is the case most likely to be typed at by mistake, and its
+      // error is the one that names the empty set.
+      each(provider.entities, (e: any) => {
+        const pairs = parentPairs(e, false)
+        const acts = e.actionList.filter((a: any) => 'save' === a.cmd)
+
+        if (e.cmds.includes('save')) {
+          Content(`
+  it('${e.name}-action-unknown-save', async () => {
+    const seneca = await makeSeneca()
+
+    await assert.rejects(
+      () => seneca.entity('provider/${provider.lower}/${e.name}')
+        .make$({ ${pairs}id: '${e.name}0' })
+        .directive$({ action$: 'no_such_action' })
+        .save$(),
+      /action\\$ "no_such_action" is not an action/,
+    )
+  })
+
+`)
+        }
+
+        if (e.cmds.includes('list')) {
+          Content(`
+  it('${e.name}-action-unknown-list', async () => {
+    const seneca = await makeSeneca()
+
+    await assert.rejects(
+      () => seneca.entity('provider/${provider.lower}/${e.name}')
+        .list$({ ${pairs}action$: 'no_such_action' }),
+      /action\\$ "no_such_action" is not an action/,
+    )
+  })
+
+`)
+        }
+
+        // THE SILENT-DROP PIN. A save with no `action$` must still take the
+        // canonical route: the whole mechanism is worthless if adding it
+        // changed what an ordinary call does, and this is the assertion that
+        // would fail if the action branch ever ran unconditionally.
+        if (0 < acts.length && e.cmds.includes('save')) {
+          const mut = mutableField(e)
+          if ('' !== mut) {
+            Content(`
+  // No action$ named, so this is the plain update — the action route must
+  // not run on a call that did not ask for it.
+  it('${e.name}-save-without-action', async () => {
+    const seneca = await makeSeneca()
+    const ent = seneca.entity('provider/${provider.lower}/${e.name}')
+
+    const loaded = await ent.load$({ ${pairs}id: '${e.name}0' })
+    loaded.${mut} = 'plain-${mut}'
+    const saved = await loaded.save$()
+
+    assert.equal(saved.${mut}, 'plain-${mut}')
+    assert.equal(
+      saved.canon$({ string: true }),
+      'provider/${provider.lower}/${e.name}',
+    )
+  })
+
+`)
+          }
+
+          // And the POSITIVE case: a name the entity DOES have is accepted
+          // and dispatched. `directive$` rather than `make$({ action$ })`
+          // because make$ drops an unknown trailing-`$` key before any store
+          // sees it — see the README's Actions section.
+          //
+          // WHAT THIS DOES NOT ASSERT, and why. The offline mock answers by
+          // matching a seeded record against the parameters of the point the
+          // SDK chose, and the seed is built for the CANONICAL route — an
+          // action route with parameters of its own has nothing seeded to
+          // match, so the mock's honest answer is a 404. Asserting a returned
+          // record here would mean generating a test that fails for every API
+          // whose actions are not shaped like its CRUD.
+          //
+          // The provider's own responsibility is to accept the name and route
+          // it. That is what is asserted: whatever comes back, it is not this
+          // plugin refusing the action. Paired with the unknown-action test
+          // above, the two together say the map holds exactly the right names.
+          const act = acts[0]
+          Content(`
+  // \`${act.action}\` is an action of \`${act.op}\`: ${act.path}
+  it('${e.name}-action-${act.action}', async () => {
+    const seneca = await makeSeneca()
+    let err = null
+
+    try {
+      await seneca.entity('provider/${provider.lower}/${e.name}')
+        .make$({ ${pairs}id: '${e.name}0' })
+        .directive$({ action$: '${act.action}' })
+        .save$()
+    }
+    catch (e) { err = e }
+
+    if (null != err) {
+      assert.ok(!/is not an action/.test(err.message),
+        'the action was refused instead of routed: ' + err.message)
+    }
+  })
+
+`)
+        }
+      })
+
       // Live tests, against the companion server in the SDK repo's `app/`.
       // They PROBE first and skip when nothing is listening, so the suite is
       // green on a machine that has never started it — a live suite that
@@ -1360,6 +1479,95 @@ missing key, rather than failing as an opaque 404 from a half-built URL.
         Content(`- \`${e.name}\` requires \`${e.parents.join('`, `')}\`
 `)
       })
+    }
+
+    // CUSTOM ACTIONS.
+    //
+    // apidef folds a non-CRUD verb into an ordinary op as an alternative
+    // point, and the SDK reaches it with `$action` in the call's argument.
+    // The `ts` target documents this in its own REFERENCE.md and the same
+    // treatment belongs here, because the Seneca spelling is DIFFERENT
+    // (`action$`, trailing dollar, Seneca's directive convention) and a
+    // reader who has only ever seen the SDK's would guess wrong.
+    //
+    // Undocumented, this is the state the plugin was in before: a GitHub
+    // provider with a `pull` entity and no way to merge a pull request at
+    // all, because nothing anywhere said the endpoint existed.
+    const acting = provider.entities.filter((e: any) => 0 < e.actionList.length)
+
+    if (0 < acting.length) {
+      const first = acting[0]
+      const firstAct = first.actionList[0]
+      const saver = acting.find((e: any) =>
+        e.actionList.some((a: any) => 'save' === a.cmd))
+
+      Content(`
+### Actions
+
+Some API endpoints are not one of the five CRUD operations — merging a pull
+request, uploading an image. The API definition folds each one into an
+ordinary operation as an alternative route, and this plugin selects one with
+the \`action$\` directive, alongside Seneca's own \`sort$\`, \`limit$\` and
+\`fields$\`.
+
+| Entity | Action | Route | Command |
+| --- | --- | --- | --- |
+`)
+      each(acting, (e: any) => {
+        each(e.actionList, (a: any) => {
+          Content(`| \`${e.name}\` | \`${a.action}\` | \`${a.path}\` | \`${a.cmd}$\` |
+`)
+        })
+      })
+
+      Content(`
+An action returns that action's OWN response, which is not necessarily a
+record of the entity it hangs off — check the API definition for its shape.
+Naming an action the entity does not have throws, and names the ones it
+does have. It never falls back to the plain command.
+
+`)
+
+      if (null != saver) {
+        const act = saver.actionList.find((a: any) => 'save' === a.cmd)
+        Content(`On \`save$\`, pass it as a directive. The rest of the entity is the
+action's payload:
+
+\`\`\`js
+const ${saver.name} = seneca.entity('provider/${provider.lower}/${saver.name}')
+
+await ${saver.name}
+  .make$({ id: 'some-id', /* ...the action's own arguments */ })
+  .directive$({ action$: '${act.action}' })
+  .save$()
+\`\`\`
+
+> **\`make$({ action$: '${act.action}' })\` does not work**, and cannot.
+> \`seneca-entity\`'s \`make$\` copies only keys without a \`$\`, plus the four
+> directives it knows by name (\`id$\`, \`merge$\`, \`custom$\`, \`directive$\`),
+> so any other trailing-\`$\` key is dropped before this plugin sees it —
+> there is nothing left for it to refuse. Use \`directive$\` as above, or
+> assign the property to an entity you already made:
+>
+> \`\`\`js
+> const p = ${saver.name}.make$({ id: 'some-id' })
+> p.action$ = '${act.action}'
+> await p.save$()
+> \`\`\`
+
+`)
+      }
+
+      if ('save' !== firstAct.cmd) {
+        Content(`On \`${firstAct.cmd}$\`, pass it in the query:
+
+\`\`\`js
+await seneca.entity('provider/${provider.lower}/${first.name}')
+  .${firstAct.cmd}$({ action$: '${firstAct.action}' })
+\`\`\`
+
+`)
+      }
     }
 
     Content(`
@@ -2860,6 +3068,12 @@ ${s.body}
 const DocReference = cmp(function DocReference(props: any) {
   const { provider } = props
 
+  // The entities exposing a custom action. Empty for an API whose every
+  // route is CRUD, and the reference says so rather than omitting the
+  // section — a reader who has seen `action$` elsewhere needs to be told it
+  // has nothing to select here.
+  const acting = provider.entities.filter((e: any) => 0 < e.actionList.length)
+
   // The entity used for worked examples: the same choice the tests and README
   // make, so all three documents show the same entity.
   const subject = [...provider.entities]
@@ -2934,6 +3148,7 @@ the [README](../README.md), and the document index is [here](README.md).
 - [Registration](#registration)
 - [Options](#options)
 - [Entities](#entities)
+- [Actions](#actions)
 - [Action patterns](#action-patterns)
 - [Plugin exports](#plugin-exports)
 - [Errors](#errors)
@@ -3289,6 +3504,41 @@ Seneca query directives — any key ending in \`$\`, such as \`sort$\` or
 \`limit$\` — are stripped before the query reaches the SDK. They are
 instructions to a store, not match fields for the API, and are not
 otherwise supported.
+
+\`action$\` is the one this plugin reads. It is stripped from the match
+fields like the rest, but it is read FIRST, and it selects a custom API
+action instead of the plain command. See
+[Actions](#actions) below.
+
+### Actions
+${0 === acting.length ? `
+This API declares no custom actions: every route is one of the five CRUD
+operations, so \`action$\` has nothing to select and naming one throws.
+` : `
+An action is an API route folded into an ordinary operation as an
+alternative point — a verb that is not create, read, update or delete.
+Select one with the \`action$\` directive; the rest of the call is that
+action's own payload.
+
+| Entity | Action | Route | Operation | Command |
+| --- | --- | --- | --- | --- |
+${acting.map((e: any) => e.actionList.map((a: any) =>
+  `| \`${e.name}\` | \`${a.action}\` | \`${a.path}\` | \`${a.op}\` | \`${a.cmd}$\` |`)
+  .join('\n')).join('\n')}
+
+On a read command (\`list$\`, \`load$\`, \`remove$\`) \`action$\` is a key of
+the query. On \`save$\` it is a directive on the entity, set with
+\`directive$({ action$: '...' })\` or assigned as a property —
+\`make$({ action$ })\` does NOT work, because \`seneca-entity\`'s \`make$\`
+drops any trailing-\`$\` key it does not know by name.
+
+Routing is by the operation the action belongs to, not by the command:
+\`save$\` covers both create and update, so an action folded into \`create\`
+is called as a create even when the entity carries an id.
+
+An action name the entity does not have throws, naming the entity, the
+command and the valid actions. It never falls back to the plain command.
+`}
 
 ## Action patterns
 

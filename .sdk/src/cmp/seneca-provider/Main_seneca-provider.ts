@@ -2,6 +2,7 @@ import {
   cmp, each,
   File, Content, Copy, Folder,
   entityCollection, entityOps, entityIdField, entityClassName,
+  entityActions,
   opRequestShape, opParams, ownPoint, entityPath,
   collectDeps, repoInfo, packageName, packageVersion, apiName, envName,
   authorInfo, contributorList, isAuthActive, isHttpBasicAuth, jsKey, jsProp,
@@ -53,6 +54,67 @@ const CMD_OPS: Record<string, string[]> = {
   load: ['load'],
   save: ['create', 'update'],
   remove: ['remove'],
+}
+
+
+// The custom ACTIONS one Seneca cmd can reach, as action name -> SDK op.
+//
+// apidef folds a non-CRUD verb into an ordinary op as an extra point marked
+// `select.$action`: GitHub's `PUT /repos/{owner}/{repo}/pulls/{n}/merge` is a
+// second point of `pull.update`, beside the canonical `PATCH`. The SDK
+// selects one with `$action` in the call's argument; without this map the
+// provider has no way to name one at all, and `merge` is simply unreachable
+// through a generated plugin.
+//
+// KEYED BY CMD, NOT BY OP, and that is the whole point of the function.
+// `save` covers create AND update, so an action folded into `create` arrives
+// through `save$` exactly as one folded into `update` does — assuming
+// `update` would send `upload_image` (petstore's
+// `POST /pet/{petId}/uploadImage`, a create point) to the wrong endpoint, and
+// the SDK would then refuse it as an invalid action on an operation the
+// caller never named.
+//
+// A name claimed by an earlier op WINS: `entityActions` walks the op map in
+// sorted-key order, so for `save` that is create before update. Two ops of
+// one entity sharing an action name is not something apidef produces from a
+// spec — the name comes from the route — and if it ever does, a stable choice
+// beats a last-writer-wins one.
+function cmdActions(ent: any, cmd: string): Record<string, string> {
+  const ops = CMD_OPS[cmd] || []
+
+  // ACTIVE ops only, for the same reason `parentKeys` uses `entityOps`: an op
+  // the model marks `active: false` generates no SDK method, so an action
+  // folded into it is not reachable and must not be advertised as if it were.
+  const live = entityOps(ent)
+  const out: Record<string, string> = {}
+
+  for (const a of entityActions(ent)) {
+    if (ops.includes(a.op) && live.includes(a.op) && null == out[a.action]) {
+      out[a.action] = a.op
+    }
+  }
+
+  return out
+}
+
+
+// Every action the entity exposes, with the cmd that reaches it — for the
+// README and the generated tests, which describe the entity rather than one
+// call. `cmd` is what a Seneca user types; `op` is what the SDK is asked for.
+function entityActionList(ent: any):
+  { cmd: string, op: string, action: string, path: string }[] {
+  const out: { cmd: string, op: string, action: string, path: string }[] = []
+
+  for (const cmd of Object.keys(CMD_OPS).sort()) {
+    const map = cmdActions(ent, cmd)
+    for (const a of entityActions(ent)) {
+      if (map[a.action] === a.op) {
+        out.push({ cmd, op: a.op, action: a.action, path: a.path })
+      }
+    }
+  }
+
+  return out
 }
 
 
@@ -353,6 +415,18 @@ const Main = cmp(function Main(props: any) {
         // the scripts speak about "the parent" in the singular; anything that
         // must be right per key reads parentOf.
         parentEntity: 0 < parents.length ? parentOf[parents[0]] : '',
+        // The custom actions this entity exposes, as cmd -> action -> SDK
+        // op. Emitted as a map in the plugin so a handler can route
+        // `action$` to the op that actually serves it, and so an unknown
+        // name can be refused with the valid ones named.
+        actions: Object.keys(CMD_OPS).sort().reduce(
+          (acc: Record<string, Record<string, string>>, cmd: string) => {
+            acc[cmd] = cmdActions(ent, cmd)
+            return acc
+          }, {}),
+        // The same information flattened, for the README and the generated
+        // tests: [{ cmd, op, action, path }].
+        actionList: entityActionList(ent),
         // Required fields only: a seed record has to satisfy the shape the
         // SDK will hand back, and optional noise makes the assertions
         // harder to read.
@@ -684,6 +758,59 @@ function ${provider.pluginName}(this: any, options: ${provider.pluginName}Option
   }
 
 
+  // \`action$\` — the directive that selects a custom API action instead of
+  // the plain cmd. READ BEFORE cleanq strips it, and still stripped from
+  // what reaches the SDK as match fields: it is an instruction to the store,
+  // like sort$ and limit$, not a value to filter on.
+  //
+  // THREE PLACES, because seneca-entity puts it in three places depending on
+  // how the caller spelled it, and dropping any one of them silently turns a
+  // named action into an ordinary call:
+  //
+  //   list$/load$/remove$({ action$ })         -> msg.q.action$
+  //   ent.directive$({ action$ }).save$()      -> msg.action$
+  //   const e = ent.make$({...}); e.action$=.. -> msg.ent.action$
+  //
+  // \`make$({ action$ })\` is NOT among them and cannot be: seneca-entity's
+  // make$ copies only keys without a \`$\`, plus the four directives it knows
+  // (id$, merge$, custom$, directive$), so an unknown trailing-\`$\` key is
+  // dropped before any store sees it. \`id$\` reads like the precedent for
+  // one, but it works only because make$ names it explicitly. The README
+  // says so; there is nothing this plugin can check, because nothing arrives.
+  function actionOf(msg: any) {
+    const q = msg && msg.q
+    const ent = msg && msg.ent
+
+    return null != (q && q.action$) ? q.action$ :
+      null != (msg && msg.action$) ? msg.action$ :
+        null != (ent && ent.action$) ? ent.action$ :
+          undefined
+  }
+
+
+  // The SDK argument for an ACTION on a read cmd: everything the caller sent
+  // minus Seneca's own directives, with the record key carried across, plus
+  // the \`$action\` selector the SDK dispatches on.
+  //
+  // WIDER than the canonical argument on purpose. An action route has its own
+  // parameters — GitHub's merge takes commit_title and merge_method, which the
+  // canonical PATCH knows nothing about — so narrowing to the plain op's
+  // required keys would strip the action's whole payload. The SDK still
+  // validates: an action whose own point cannot be built is refused with
+  // \`point_action_invalid\` rather than sent somewhere else.
+  function actionq(q: any, rk: string, action: string) {
+    const out = cleanq(q)
+
+    if ('id' !== rk && null != out.id) {
+      out[rk] = out.id
+      delete out.id
+    }
+
+    out.$action = action
+    return out
+  }
+
+
   // The SDK throws on any non-2xx. A 404 from a single-item read is an
   // ordinary "not found" answer rather than a failure, so return null and let
   // everything else propagate. SDK errors carry the HTTP status at the top
@@ -751,6 +878,61 @@ function ${provider.pluginName}(this: any, options: ${provider.pluginName}Option
 `)
       })
 
+      // WHICH SDK OP SERVES EACH `action$`, per entity and per cmd.
+      //
+      // Emitted for EVERY cmd, including the ones with no actions at all.
+      // That empty map is not waste: it is what lets `actionop` refuse an
+      // `action$` on an entity that has none, instead of ignoring the key
+      // and performing an ordinary call. Passing `action$` and getting a
+      // plain save is the failure this whole mechanism exists to prevent —
+      // it is how GitHub's `merge` silently became an "update".
+      Content(`  // The custom actions each cmd can reach, as action -> SDK op. An action
+  // is an alternative POINT of an ordinary op (\`select.$action\` in the API
+  // model), so \`save$\` routes by this map rather than assuming update: an
+  // action folded into \`create\` is reached through \`save$\` too.
+  const ACTIONS: Record<string, Record<string, Record<string, string>>> = {
+`)
+      each(provider.entities, (e: any) => {
+        Content(`    ${jsKey(e.name)}: {
+`)
+        each(e.cmds, (cmd: any) => {
+          const name = String(cmd.val$ ?? cmd)
+          const map = e.actions[name] || {}
+          const names = Object.keys(map).sort()
+          Content(`      ${name}: {${names.map((a: string) =>
+            ` ${jsKey(a)}: '${map[a]}'`).join(',')}${0 < names.length ? ' ' : ''}},
+`)
+        })
+        Content(`    },
+`)
+      })
+      Content(`  }
+
+
+  // Resolve an \`action$\` to the SDK op that serves it, or REFUSE it.
+  //
+  // Never falls through to the ordinary call. An action name the entity does
+  // not have is a caller mistake worth a message that names what is
+  // available; performing a plain save instead is the one outcome that must
+  // not happen, because it succeeds and does the wrong thing.
+  function actionop(name: string, entname: string, cmd: string) {
+    const map = (ACTIONS[entname] || {})[cmd] || {}
+    const op = map[name]
+
+    if (null == op) {
+      const valid = Object.keys(map).sort()
+      throw new Error(
+        '${provider.pkgName}: ' + entname + ' ' + cmd + ': action$ "' + name +
+        '" is not an action of this operation. Valid: ' +
+        (0 < valid.length ? valid.join(', ') : '(none)'))
+    }
+
+    return op
+  }
+
+
+`)
+
       // The cmd map, declared up front so every action is attached to a
       // shape seneca-entity can read before the actions are defined.
       Content(`  const entity: any = {
@@ -809,12 +991,26 @@ function ${provider.pluginName}(this: any, options: ${provider.pluginName}Option
         const out = (expr: string) =>
           'id' === rk ? `plain(${expr})` : `id_${e.name}(plain(${expr}))`
 
+        // The action branch, emitted for every cmd whether or not this entity
+        // has actions. `actionop` is what refuses an unknown name, so leaving
+        // it out where the map is empty would restore the silent drop for
+        // exactly the entities most likely to be typed at by mistake.
+        const actionBranch = (cmd: string, call: string) => `      const action$ = actionOf(msg)
+      if (null != action$) {
+        const op$ = actionop(action$, '${e.name}', '${cmd}')
+${call}      }
+
+`
+
         if (e.cmds.includes('list')) {
           Content(`
   ${jsProp('entity', e.name)}.cmd.list.action =
     async function list_${e.name}(this: any, entize: any, msg: any) {
       const q = cleanq(msg.q)
-${guard('list', 'q')}      const list = await this.shared.sdk.${e.acc}().list(q)
+${guard('list', 'q')}${actionBranch('list',
+            `        const found = await this.shared.sdk.${e.acc}()[op$](actionq(msg.q, '${rk}', action$))
+        return found.map((data: any) => entize(${out('data')}))
+`)}      const list = await this.shared.sdk.${e.acc}().list(q)
       return list.map((data: any) => entize(${out('data')}))
     }
 
@@ -826,7 +1022,10 @@ ${guard('list', 'q')}      const list = await this.shared.sdk.${e.acc}().list(q)
   ${jsProp('entity', e.name)}.cmd.load.action =
     async function load_${e.name}(this: any, entize: any, msg: any) {
       const q = cleanq(msg.q)
-${guard('load', 'q')}      const res = await ornull(() => this.shared.sdk.${e.acc}().load(${sdkArg('load')}))
+${guard('load', 'q')}${actionBranch('load',
+            `        const hit = await ornull(() => this.shared.sdk.${e.acc}()[op$](actionq(msg.q, '${rk}', action$)))
+        return null == hit ? null : entize(${out('hit')})
+`)}      const res = await ornull(() => this.shared.sdk.${e.acc}().load(${sdkArg('load')}))
       return null == res ? null : entize(${out('res')})
     }
 
@@ -865,7 +1064,14 @@ ${guard('load', 'q')}      const res = await ornull(() => this.shared.sdk.${e.ac
       const data = msg.ent.data$(false)
 ${guard('save', 'data')}${alias}      const sdk = this.shared.sdk
 
-${body}
+${actionBranch('save',
+            `        // The action's OWN payload is the entity's own fields — data$(false)
+        // has already dropped every trailing-\`$\` key, \`action$\` included,
+        // so \`$action\` is the only thing added here.
+        data.$action = action$
+        const done = await sdk.${e.acc}()[op$](data)
+        return entize(${out('done')})
+`)}${body}
 
       return entize(${out('res')})
     }
@@ -878,7 +1084,10 @@ ${body}
   ${jsProp('entity', e.name)}.cmd.remove.action =
     async function remove_${e.name}(this: any, _entize: any, msg: any) {
       const q = cleanq(msg.q)
-${guard('remove', 'q')}      await ornull(() => this.shared.sdk.${e.acc}().remove(${sdkArg('remove')}))
+${guard('remove', 'q')}${actionBranch('remove',
+            `        await ornull(() => this.shared.sdk.${e.acc}()[op$](actionq(msg.q, '${rk}', action$)))
+        return null
+`)}      await ornull(() => this.shared.sdk.${e.acc}().remove(${sdkArg('remove')}))
       return null
     }
 
@@ -1008,4 +1217,6 @@ if ('undefined' !== typeof module) {
 export {
   Main,
   recordKey,
+  cmdActions,
+  entityActionList,
 }

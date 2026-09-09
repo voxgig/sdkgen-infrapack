@@ -163,6 +163,215 @@ main: kit: flow: Basic3dsSessionFlow: {
 `
 
 
+// AN ENTITY WITH CUSTOM ACTIONS, mirroring github-sdk's real `pull`.
+//
+// `update` carries the canonical PATCH plus a `merge` ACTION point — apidef's
+// shape for GitHub's `PUT /repos/{owner}/{repo}/pulls/{n}/merge`, the case
+// this whole mechanism exists for. `create` carries a second action, so
+// `save$` has to route by the op that owns the action rather than assuming
+// `update`: `upload_image` on an entity carrying an id is still a create.
+const ACTION_ENTITY = `
+main: kit: entity: pull: {
+  alias: field: {}
+  name: "pull"
+  id: { field: "id", name: "id" }
+  field: {
+    id:    { name: "id",    kind: "field", type: "\`$STRING\`", required: true }
+    title: { name: "title", kind: "field", type: "\`$STRING\`", required: true }
+  }
+  fields: [
+    { name: "id",    req: true, type: "\`$STRING\`" }
+    { name: "title", req: true, type: "\`$STRING\`" }
+  ]
+  op: {
+    list: { name: "list", points: [ {
+      args: {}, method: "GET", orig: "/pull", segments: [{ lit: "pull" }]
+      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    load: { name: "load", points: [ {
+      args: { params: [
+        { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "p01" }
+      ] }
+      method: "GET", orig: "/pull/{id}", segments: [{ lit: "pull" }, { var: "id" }]
+      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    create: {
+      name: "create"
+      points: [
+        {
+          args: { body: [ { kind: "body", name: "title", reqd: true, type: "\`$STRING\`" } ] }
+          method: "POST", orig: "/pull", segments: [{ lit: "pull" }]
+          transform: { req: "\`reqdata\`", res: "\`body\`" }
+        }
+        {
+          args: {
+            params: [ { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "p01" } ]
+            body: [ { kind: "body", name: "image", type: "\`$STRING\`" } ]
+          }
+          method: "POST", orig: "/pull/{id}/image"
+          segments: [{ lit: "pull" }, { var: "id" }, { lit: "image" }]
+          select: { '$action': "upload_image", exist: [ "id" ] }
+          transform: { req: "\`reqdata\`", res: "\`body\`" }
+        }
+      ]
+    }
+    update: {
+      name: "update"
+      points: [
+        {
+          args: {
+            params: [ { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "p01" } ]
+            body: [ { kind: "body", name: "title", type: "\`$STRING\`" } ]
+          }
+          method: "PATCH", orig: "/pull/{id}", segments: [{ lit: "pull" }, { var: "id" }]
+          transform: { req: "\`reqdata\`", res: "\`body\`" }
+        }
+        {
+          args: {
+            params: [ { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "p01" } ]
+            body: [ { kind: "body", name: "commit_title", type: "\`$STRING\`" } ]
+          }
+          method: "PUT", orig: "/pull/{id}/merge"
+          segments: [{ lit: "pull" }, { var: "id" }, { lit: "merge" }]
+          select: { '$action': "merge", exist: [ "id" ] }
+          transform: { req: "\`reqdata\`", res: "\`body\`" }
+        }
+      ]
+    }
+    remove: { name: "remove", points: [ {
+      args: { params: [
+        { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "p01" }
+      ] }
+      method: "DELETE", orig: "/pull/{id}", segments: [{ lit: "pull" }, { var: "id" }]
+      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+  }
+}
+
+main: kit: flow: BasicPullFlow: {
+  entity: "pull", kind: "basic", name: "BasicPullFlow"
+  step: [
+    { op: "create", input: { ref: "pull_ref01" } }
+    { op: "list" }
+    { op: "update", input: {
+        ref: "pull_ref01", srcdatavar: "pull_ref01_data",
+        suffix: "_up0", textfield: "title" } }
+    { op: "load", input: {
+        ref: "pull_ref01", srcdatavar: "pull_ref01_data", suffix: "_dt0" } }
+    { op: "remove", input: { ref: "pull_ref01", suffix: "_rm0" } }
+  ]
+}
+`
+
+
+// AN ENTITY WHOSE ONLY WRITE OP IS AN ACTION. Its `update` has a single
+// point and that point is an action route — the entity has no plain update
+// at all. It must still generate a `save$`: dropping the entity, or the cmd,
+// leaves the action unreachable, which is the state this change is fixing.
+const ACTION_ONLY_ENTITY = `
+main: kit: entity: badge: {
+  alias: field: {}
+  name: "badge"
+  id: { field: "id", name: "id" }
+  field: {
+    id: { name: "id", kind: "field", type: "\`$STRING\`", required: true }
+  }
+  fields: [ { name: "id", req: true, type: "\`$STRING\`" } ]
+  op: {
+    list: { name: "list", points: [ {
+      args: {}, method: "GET", orig: "/badge", segments: [{ lit: "badge" }]
+      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    update: { name: "update", points: [ {
+      args: {
+        params: [ { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "b01" } ]
+        body: [ { kind: "body", name: "reason", type: "\`$STRING\`" } ]
+      }
+      method: "POST", orig: "/badge/{id}/award"
+      segments: [{ lit: "badge" }, { var: "id" }, { lit: "award" }]
+      select: { '$action': "award", exist: [ "id" ] }
+      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+  }
+}
+
+main: kit: flow: BasicBadgeFlow: {
+  entity: "badge", kind: "basic", name: "BasicBadgeFlow"
+  step: [ { op: "list" } ]
+}
+`
+
+
+// Load a GENERATED provider and hand back the entity cmd map it builds.
+//
+// The provider is a plain module: it requires its own package.json and the
+// SDK, calls `this.export('provider/entityBuilder')`, and hands that builder
+// the map of `entity.<name>.cmd.<cmd>.action` functions. Shimming those three
+// things is enough to call one of those functions directly, with a recording
+// SDK in `this.shared.sdk` — no Seneca, no SDK, no server, and the code under
+// test is the emitted source rather than a paraphrase of it.
+function loadProvider(files, name) {
+  const path = Object.keys(files).find((p) => p.endsWith(`src/${name}.ts`))
+  ok(null != path, 'no provider source generated:\n  ' +
+    Object.keys(files).join('\n  '))
+
+  const js = transform(String(files[path]), {
+    transforms: ['typescript', 'imports'],
+    filePath: path,
+  }).code
+
+  const stub = { version: '0.0.0' }
+  const req = (p) => p.endsWith('package.json') ? stub : new Proxy({}, {
+    get: () => class Stub { },
+  })
+
+  const mod = { exports: {} }
+  new Function('exports', 'require', 'module', js)(mod.exports, req, mod)
+
+  const plugin = mod.exports.default || mod.exports
+
+  let entity = null
+  const seneca = {
+    export: () => (_self, spec) => { entity = spec.entity },
+    message: () => { },
+    prepare: () => { },
+    shared: {},
+  }
+
+  plugin.call(seneca, { sdk: {} })
+  ok(null != entity, 'the provider registered no entity map')
+
+  return entity
+}
+
+
+// A recording stand-in for the SDK: every call is captured as
+// [accessor, op, argument], and nothing else happens.
+function recordingSdk(calls) {
+  return new Proxy({}, {
+    get: (_t, acc) => () => new Proxy({}, {
+      get: (_t2, op) => async (arg) => {
+        calls.push([String(acc), String(op), arg])
+        // `list` resolves to a list of SDK entities, everything else to one.
+        return 'list' === String(op) ?
+          [{ data: () => ({ id: 'r0' }) }] : { data: () => ({ id: 'r0' }) }
+      },
+    }),
+  })
+}
+
+
+// Drive one generated cmd action.
+function drive(entity, entname, cmd, msg, calls) {
+  const self = { shared: { sdk: recordingSdk(calls) } }
+  return entity[entname].cmd[cmd].action.call(self, (d) => d, msg)
+}
+
+
+// The `msg` seneca-entity hands a save: the entity, and `data$(false)` as the
+// record's own fields. `action$` is deliberately NOT in there — seneca-entity
+// excludes every trailing-`$` field from data$(false), which is why the
+// provider reads it off the message and the entity instead.
+function saveMsg(data, extra) {
+  return { q: {}, ent: { data$: () => ({ ...data }) }, ...(extra || {}) }
+}
+
+
 function consumerModel(sdk, extra) {
   const src = [
     '@"@voxgig/apidef/model/apidef.aon"',
@@ -462,6 +671,230 @@ describe('seneca-provider target, from its package', () => {
           'a bare digit-leading key survived in the generated test SEED map')
       }
     })
+
+
+  // THE `action$` DIRECTIVE.
+  //
+  // apidef folds a non-CRUD verb into an ordinary op as an extra point marked
+  // `select.$action`. The `ts` SDK reaches one with `$action` in the call's
+  // argument; before this, the provider had no way to name one at all, so a
+  // generated GitHub plugin could not merge a pull request.
+  //
+  // Every test here DRIVES THE GENERATED SOURCE (see loadProvider): the
+  // assertions are about what the emitted handler does when called, not about
+  // what the component's source text looks like.
+  describe('actions', () => {
+
+    let entity
+
+    before(async () => {
+      const { files } = await generateInto(consumer, {
+        model: consumerModel(consumer.sdk, ACTION_ENTITY + ACTION_ONLY_ENTITY),
+      })
+      entity = loadProvider(files, 'demo-provider')
+    })
+
+
+    // The case from github-sdk: `merge` is a point of `update`, and save$
+    // must hand the SDK `$action` so it selects that point.
+    test('save$ with action$ passes $action to the SDK', async () => {
+      const calls = []
+      await drive(entity, 'pull', 'save',
+        saveMsg({ id: 'p1', commit_title: 'Merge #42' },
+          { action$: 'merge' }), calls)
+
+      deepStrictEqual(calls, [['Pull', 'update',
+        { id: 'p1', commit_title: 'Merge #42', $action: 'merge' }]])
+    })
+
+
+    // THE SILENT-DROP TEST, and the most important one here.
+    //
+    // A save with no `action$` must still take the canonical route. Passing
+    // action$ and getting an ordinary save is the worst outcome — it succeeds
+    // and does something else — but so is the reverse: an action branch that
+    // ran unconditionally would make every plain update an action call.
+    // Neither is visible without asserting the exact argument.
+    test('save$ WITHOUT action$ binds the canonical point, untouched', async () => {
+      const calls = []
+      await drive(entity, 'pull', 'save',
+        saveMsg({ id: 'p1', title: 'New title' }), calls)
+
+      deepStrictEqual(calls, [['Pull', 'update', { id: 'p1', title: 'New title' }]])
+
+      // No `$action` key at all, not merely an undefined one: the SDK
+      // dispatches on its presence.
+      ok(!('$action' in calls[0][2]), '$action reached a call that named none')
+    })
+
+
+    // ROUTING BY OP, not by cmd. `upload_image` belongs to `create`, and the
+    // entity carries an id — Seneca's own rule would make that an update, and
+    // sending the action there asks the SDK for an action `update` does not
+    // have.
+    test('an action on create routes to create, not update', async () => {
+      const calls = []
+      await drive(entity, 'pull', 'save',
+        saveMsg({ id: 'p1', image: 'x' }, { action$: 'upload_image' }), calls)
+
+      strictEqual(calls[0][1], 'create')
+    })
+
+
+    // An unknown name is REFUSED, and refused before anything is called: the
+    // alternative is an ordinary save that reports success.
+    test('an unknown action$ throws and makes no SDK call', async () => {
+      const calls = []
+      let err = null
+
+      try {
+        await drive(entity, 'pull', 'save',
+          saveMsg({ id: 'p1' }, { action$: 'rebase' }), calls)
+      }
+      catch (e) { err = e }
+
+      ok(null != err, 'an unknown action$ was accepted')
+      ok(/action\$ "rebase" is not an action/.test(err.message), err.message)
+      ok(/pull save/.test(err.message),
+        'the error names neither the entity nor the cmd: ' + err.message)
+      ok(/merge/.test(err.message),
+        'the error does not name the valid actions: ' + err.message)
+      deepStrictEqual(calls, [], 'the SDK was called anyway')
+    })
+
+
+    // The same refusal on an entity that has NO actions, which is the case
+    // most likely to be typed at by mistake.
+    test('action$ on a cmd with no actions names the empty set', async () => {
+      const calls = []
+      let err = null
+
+      try {
+        await drive(entity, 'planet', 'save',
+          saveMsg({ id: 'p1' }, { action$: 'merge' }), calls)
+      }
+      catch (e) { err = e }
+
+      ok(null != err, 'action$ was ignored on an entity with no actions')
+      ok(/planet save/.test(err.message), err.message)
+      ok(/\(none\)/.test(err.message), err.message)
+      deepStrictEqual(calls, [])
+    })
+
+
+    // THE READ SIDE. Actions are not confined to write ops, and on a read cmd
+    // `action$` arrives as a key of the QUERY — which cleanq strips, so it has
+    // to be read before that happens.
+    test('list$ carries action$ from the query, and strips it as a match field',
+      async () => {
+        const calls = []
+        await drive(entity, 'pull', 'list',
+          { q: { action$: 'nosuch' }, ent: {} }, calls)
+          .then(() => { throw new Error('an unknown action$ was accepted') },
+            (e) => ok(/action\$ "nosuch" is not an action/.test(e.message),
+              e.message))
+
+        // And with no action$, the query reaches the SDK with no directive in
+        // it — the behaviour cleanq already had, unchanged.
+        calls.length = 0
+        await drive(entity, 'pull', 'list',
+          { q: { title: 'x', sort$: 'title' }, ent: {} }, calls)
+
+        deepStrictEqual(calls, [['Pull', 'list', { title: 'x' }]])
+      })
+
+
+    // AN ENTITY WHOSE OP HAS ONLY ACTION POINTS must still generate. Its
+    // `update` is a single `award` route and nothing else, so an entity
+    // assembly that treated an action-only op as no op at all would drop the
+    // cmd — and with it the only way to reach the endpoint.
+    test('an entity whose op has only action points still generates', async () => {
+      ok(null != entity.badge, 'the action-only entity vanished')
+      ok(null != entity.badge.cmd.save, 'its save$ vanished')
+
+      const calls = []
+      await drive(entity, 'badge', 'save',
+        saveMsg({ id: 'b1', reason: 'why' }, { action$: 'award' }), calls)
+
+      deepStrictEqual(calls, [['Badge', 'update',
+        { id: 'b1', reason: 'why', $action: 'award' }]])
+    })
+
+
+    // THE THREE SPELLINGS seneca-entity actually delivers, and the one it
+    // does not. `make$({ action$ })` reaches nothing — make$ copies only keys
+    // without a `$`, plus the four directives it knows by name — so the
+    // provider reads the message and the entity as well as the query.
+    test('action$ is read from the query, the message and the entity', async () => {
+      for (const msg of [
+        saveMsg({ id: 'p1' }, { action$: 'merge' }),                    // directive$
+        saveMsg({ id: 'p1' }, { ent: { data$: () => ({ id: 'p1' }), action$: 'merge' } }),
+        saveMsg({ id: 'p1' }, { q: { action$: 'merge' } }),
+      ]) {
+        const calls = []
+        await drive(entity, 'pull', 'save', msg, calls)
+        strictEqual(calls[0][2].$action, 'merge')
+      }
+    })
+  })
+
+
+  // `cmdActions` — which SDK op serves each action of one cmd.
+  describe('cmdActions', () => {
+
+    const { cmdActions } = loadComponent('Main_seneca-provider.ts', {
+      './Extras_seneca-provider': {
+        Tests: () => { }, Scripts: () => { }, Workflow: () => { },
+        Readme: () => { }, Docs: () => { },
+      },
+      './Gitignore_seneca-provider': { Gitignore: () => { } },
+    })
+
+    const ENT = {
+      name: 'pull',
+      fields: {},
+      op: {
+        create: {
+          name: 'create',
+          points: [
+            { orig: '/pull' },
+            { orig: '/pull/{id}/image', select: { $action: 'upload_image' } },
+          ],
+        },
+        update: {
+          name: 'update',
+          points: [
+            { orig: '/pull/{id}' },
+            { orig: '/pull/{id}/merge', select: { $action: 'merge' } },
+          ],
+        },
+      },
+    }
+
+    // `save` spans two ops, so its map is the union — and each name has to
+    // carry the op it came from, or save$ sends `upload_image` to update.
+    test('save maps each action to the op that owns it', () => {
+      deepStrictEqual(cmdActions(ENT, 'save'),
+        { upload_image: 'create', merge: 'update' })
+    })
+
+    test('a cmd whose ops have no action points maps nothing', () => {
+      deepStrictEqual(cmdActions(ENT, 'list'), {})
+      deepStrictEqual(cmdActions(ENT, 'remove'), {})
+    })
+
+    // An op the model marks inactive generates no SDK method, so an action
+    // folded into it is not reachable and must not be advertised as if it
+    // were — the same rule parentKeys follows for guards.
+    test('an inactive op contributes no action', () => {
+      const ent = {
+        ...ENT,
+        op: { ...ENT.op, update: { ...ENT.op.update, active: false } },
+      }
+
+      deepStrictEqual(cmdActions(ent, 'save'), { upload_image: 'create' })
+    })
+  })
 
 
   // `recordKey` — which param names the record itself.
