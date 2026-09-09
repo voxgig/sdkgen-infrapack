@@ -1,7 +1,7 @@
 {
   "_comment": [
-    "Type-check the target's components. They compile inside a CONSUMER",
-    "project, never as part of anything in this directory, so a missing import",
+    "Compile the target's components. They run inside a CONSUMER",
+    "project, so a missing import",
     "or a renamed export is invisible without this and fatal there — it breaks",
     "every generated Seneca provider.",
     "",
@@ -18,7 +18,8 @@
     "module": "node16",
     "moduleResolution": "node16",
     "strict": false,
-    "noEmit": true,
+    "rootDir": ".sdk/src/cmp",
+    "outDir": ".build/cmp",
     "skipLibCheck": true,
     "esModuleInterop": true
   },

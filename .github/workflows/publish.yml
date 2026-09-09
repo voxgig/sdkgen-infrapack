@@ -14,8 +14,8 @@
 #            and no repository write.
 #   publish  id-token: write, contents: read. Installs NO project
 #            dependencies and runs NO project code: this package ships pure
-#            source (`files` is .sdk + the manifest, and the build is
-#            `noEmit`), so nothing needs building to pack.
+#            source (`files` is .sdk + the manifest; build output is in
+#            .build), so nothing needs building to pack.
 #   tag      contents: write. Runs git and nothing else.
 #
 # THE SPLIT IS THE POINT. A compromised dependency lifecycle script can ask

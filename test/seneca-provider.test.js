@@ -13,7 +13,7 @@
 //     test is the real one — `package add` installs this package into a
 //     staged consumer, the consumer's components are compiled the way its own
 //     build compiles them, and generation runs from `.sdk`.
-//   - UNIT tests on an exported helper transpile the shipped component and
+//   - UNIT tests on an exported helper load the built component and
 //     call the function directly. That is how they were written in sdkgen and
 //     it is still the right shape: the cases below are hand-built model
 //     fragments from real APIs, and driving them through a whole generation
@@ -24,30 +24,28 @@ const { ok, strictEqual, deepStrictEqual } = require('node:assert')
 
 const Fs = require('node:fs')
 const Path = require('node:path')
+const Os = require('node:os')
+const { execFileSync } = require('node:child_process')
 
 const { Aontu } = require('aontu')
-const { transform } = require('sucrase')
 const { Script } = require('node:vm')
 
 const { stageConsumer, generateInto } = require('@voxgig/sdkgen/testkit')
 
 
 const PKG = Path.resolve(__dirname, '..')
-const CMP = Path.join(PKG, '.sdk', 'src', 'cmp', 'seneca-provider')
+const CMP = Path.join(PKG, '.build', 'cmp', 'seneca-provider')
 
 
-// Transpile a shipped component and hand back its exports.
+// Load a built component and hand back its exports.
 //
 // `@voxgig/sdkgen` is shimmed to the resolved package rather than left to
 // Node: the component requires it by bare name, which is right for a consumer
 // (it has the dependency) and resolvable here only because this package
 // devDepends on it. Shimming keeps the two readings the same one.
 function loadComponent(file, extraShims = {}) {
-  const path = Path.join(CMP, file)
-  const js = transform(Fs.readFileSync(path, 'utf8'), {
-    transforms: ['typescript', 'imports'],
-    filePath: path,
-  }).code
+  const path = Path.join(CMP, file.replace(/\.ts$/, '.js'))
+  const js = Fs.readFileSync(path, 'utf8')
 
   const shims = { '@voxgig/sdkgen': require('@voxgig/sdkgen'), ...extraShims }
   const req = (p) => (p in shims ? shims[p] : require(p))
@@ -436,6 +434,23 @@ main: kit: flow: BasicAlertFlow: {
 `
 
 
+// Generated providers exist only during the test; compile them via npm too.
+function compileProvider(src) {
+  const dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'infrapack-provider-'))
+  try {
+    const input = Path.join(dir, 'provider.cts')
+    Fs.writeFileSync(input, src)
+    execFileSync(process.execPath, [process.env.npm_execpath,
+      'run', 'build:provider-test', '--', '--outDir', dir, input,
+    ], { cwd: PKG, stdio: 'inherit' })
+    return Fs.readFileSync(Path.join(dir, 'provider.cjs'), 'utf8')
+  }
+  finally {
+    Fs.rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+
 // Load a GENERATED provider and hand back the entity cmd map it builds.
 //
 // The provider is a plain module: it requires its own package.json and the
@@ -449,10 +464,7 @@ function loadProvider(files, name) {
   ok(null != path, 'no provider source generated:\n  ' +
     Object.keys(files).join('\n  '))
 
-  const js = transform(String(files[path]), {
-    transforms: ['typescript', 'imports'],
-    filePath: path,
-  }).code
+  const js = compileProvider(String(files[path]))
 
   const stub = { version: '0.0.0' }
   const req = (p) => p.endsWith('package.json') ? stub : new Proxy({}, {
@@ -547,7 +559,16 @@ describe('seneca-provider target, from its package', () => {
     consumer = stageConsumer({ recordLog: true })
     await consumer.add('target', consumer.bundledRef('target', 'ts'))
     await consumer.addPackage(PKG)
-    consumer.compile()
+    const config = Path.join(consumer.root, 'tsconfig.json')
+    const outdir = Path.join(consumer.sdk, 'dist', 'cmp')
+    Fs.copyFileSync(Path.join(PKG, 'tsconfig.json'), config)
+    execFileSync(process.execPath, [process.env.npm_execpath,
+      'run', 'build', '--', '--project', config, '--outDir', outdir,
+    ], { cwd: PKG, stdio: 'inherit' })
+    Fs.cpSync(Path.join(consumer.sdk, 'src', 'cmp'), outdir, {
+      recursive: true,
+      filter: (path) => !path.endsWith('.ts') && Path.basename(path) !== 'fragment',
+    })
   })
 
   after(() => {
@@ -775,7 +796,7 @@ describe('seneca-provider target, from its package', () => {
         // The whole file has to PARSE. That is the point of the upstream fix,
         // and a parse check cannot be satisfied by escaping one construct and
         // missing another.
-        transform(src, { transforms: ['typescript', 'imports'] })
+        new Script(compileProvider(src))
 
         // The accessor must be the name the SDK actually declares.
         // `MainEntity_ts` declares the method as `${entity.Name}()`, and
