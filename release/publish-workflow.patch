@@ -1,9 +1,9 @@
 diff --git a/.github/workflows/publish.yml b/.github/workflows/publish.yml
 new file mode 100644
-index 0000000..f7a0422
+index 0000000..944f97a
 --- /dev/null
 +++ b/.github/workflows/publish.yml
-@@ -0,0 +1,355 @@
+@@ -0,0 +1,362 @@
 +# Releases @voxgig/sdkgen-infrapack: verifies, publishes to npm, then writes the git tag.
 +#
 +# ONE FILE, BECAUSE NPM ALLOWS EXACTLY ONE. A trusted publisher is registered
@@ -59,6 +59,13 @@ index 0000000..f7a0422
 +#
 +# Renaming this file breaks publishing until the npm-side trusted publisher is
 +# updated to match.
++#
++# THIS WORKFLOW CANNOT PUBLISH THE PACKAGE'S FIRST VERSION. npm only exposes
++# the settings page that configures a trusted publisher once a version is
++# already on the registry, so there is nothing to register against until then.
++# The first release is made by hand, once, with an authenticated npm; the
++# publisher is registered after it; every release from then on is this
++# workflow. See release/README.md.
 +
 +name: publish
 +

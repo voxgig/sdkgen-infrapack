@@ -23,11 +23,47 @@ git commit -m "ci: publish workflow"
 The patch is checked to apply and reverse cleanly against the commit that
 introduced it.
 
-## Then register the trusted publisher — this cannot be scripted
+## Bootstrap: the FIRST release cannot use this workflow
 
-The workflow publishes over OIDC, with **no npm token anywhere**. npm will
-refuse the exchange until a trusted publisher is registered for this package
-on npmjs.com, against this repository and this exact workflow filename:
+`@voxgig/sdkgen-infrapack` is not on the registry, and that ordering matters more than it looks.
+
+**npm only exposes the trusted-publisher settings once a version already
+exists.** There is nothing to register against until the package is there, so
+"register the publisher, then run the workflow" is not a sequence anyone can
+follow from here — the first step is impossible and the second would fail.
+
+This is not a guess; it is what this toolchain already documents. The
+seneca-provider target generates the same workflow for every SDK it builds,
+and its header says so directly:
+
+> npm cannot publish a package's FIRST version this way — the settings page
+> that configures a trusted publisher only exists once a version is there. So
+> release … by hand once, configure the publisher, and every release after
+> that is a tag push.
+
+So the order is: **publish once by hand, then register, then automate.**
+
+### 1. Publish the first version by hand, once
+
+From a clean checkout of `main`, with npm authenticated (`npm login`), run the
+same gates the workflow would and then publish:
+
+```sh
+npm install --no-audit --no-fund
+npm run build
+npm test
+npm run check-package
+npm publish --access public          # scoped: restricted by default without this
+git tag v1.1.0 && git push origin v1.1.0
+```
+
+Tag it too, so the registry and the repository agree from the start — every
+later run of the workflow assumes they do.
+
+### 2. Register the trusted publisher
+
+On npmjs.com, for this package, against this repository and this exact
+workflow filename:
 
 | field | value |
 | --- | --- |
@@ -38,28 +74,18 @@ on npmjs.com, against this repository and this exact workflow filename:
 Renaming the workflow file breaks publishing until the npm-side registration
 is updated to match.
 
-Note that `@voxgig/sdkgen-infrapack` does not yet exist on the registry, so this is a **first**
-publish. The workflow passes `--access public` for that reason: npm defaults
-a scoped package to restricted on its first publish. Whether npm lets you
-register a trusted publisher for a name that has never been published, or
-wants a first publish by another route, is the one step to confirm at the
-console — it could not be verified from here.
-
-## Release
-
-Once the publisher is registered, releasing is a button:
+### 3. Every release after that is the workflow
 
 1. **Bump the version in BOTH `package.json` and `sdkgen-package.json`** on
-   `main` (both currently `1.1.0`). Both files ship, and `package check` does
-   **not** compare them — a release bumping only one leaves consumers with
-   conflicting metadata, silently. The workflow's first job refuses the
-   release if they disagree, so this cannot slip through unnoticed, but it is
-   still yours to keep in step.
+   `main`. Both files ship, and `package check` does **not** compare them — a
+   release bumping only one leaves consumers with conflicting metadata,
+   silently. The workflow's first job refuses the release if they disagree,
+   so it cannot slip through unnoticed, but it is still yours to keep in step.
 
    Nothing in the workflow commits: it reads the version already on the
    branch, so the bump stays a reviewable diff.
-2. Run the **publish** workflow from `main`, optionally passing
-   `expect_sha` to refuse the run if `main` has moved since you decided.
+2. Run the **publish** workflow from `main`, optionally passing `expect_sha`
+   to refuse the run if `main` has moved since you decided.
 3. It publishes to npm, then tags `v<version>`.
 
 Publishing happens before tagging, so a tag only ever exists for a release
