@@ -670,8 +670,23 @@ describe('${provider.fileBase}', () => {
         // canonical route: the whole mechanism is worthless if adding it
         // changed what an ordinary call does, and this is the assertion that
         // would fail if the action branch ever ran unconditionally.
+        //
+        // GATED ON THE ENTITY BEING ABLE TO PERFORM ONE, which is three
+        // separate facts and was none of them. The test loads a record, edits
+        // it and saves it back, so it needs a `load` cmd to fetch with, a
+        // canonical `update` route to save to — an entity whose only update
+        // point is the action has no plain save at all — and a mutable field
+        // to change. Emitted without those it ships a red suite to a package
+        // whose action works perfectly, which is the worst kind of generated
+        // test: it fails for a reason that is not about the code it names.
+        //
+        // The ACTION tests below are not gated on any of this. They are what
+        // this entity does have.
+        const canPlainSave = e.cmds.includes('load') &&
+          e.canonicalOps.includes('update')
+
         if (0 < acts.length && e.cmds.includes('save')) {
-          const mut = mutableField(e)
+          const mut = canPlainSave ? mutableField(e) : ''
           if ('' !== mut) {
             Content(`
   // No action$ named, so this is the plain update — the action route must

@@ -88,13 +88,39 @@ function cmdActions(ent: any, cmd: string): Record<string, string> {
   const live = entityOps(ent)
   const out: Record<string, string> = {}
 
+  // `null == out[a.action]` on a plain object reads Object's PROTOTYPE for a
+  // name like `toString` or `constructor`, finds a function, and concludes
+  // the name is already claimed — dropping a modelled action that happens to
+  // carry one. Ask whether the map itself has the key.
+  const claimed = (name: string) =>
+    Object.prototype.hasOwnProperty.call(out, name)
+
   for (const a of entityActions(ent)) {
-    if (ops.includes(a.op) && live.includes(a.op) && null == out[a.action]) {
+    if (ops.includes(a.op) && live.includes(a.op) && !claimed(a.action)) {
       out[a.action] = a.op
     }
   }
 
   return out
+}
+
+
+// The ops that have a route of their OWN, as opposed to nothing but folded-in
+// actions. An op whose every point is an action point has no plain call: a
+// `save$` naming no action still reaches the SDK's `update`, but the SDK finds
+// one point and takes it, so the "canonical" update IS the action's route.
+//
+// Which is what the generated tests need to know before writing a plain,
+// id-bearing save: without this they were emitted for an entity that has no
+// such call to make.
+function canonicalOps(ent: any): string[] {
+  return entityOps(ent).filter((opname: string) => {
+    const op = (ent.op || {})[opname]
+    const points: any[] = (op && op.points) || []
+
+    return points.some((pt: any) =>
+      null == (pt && pt.select && pt.select['$action']))
+  })
 }
 
 
@@ -427,6 +453,10 @@ const Main = cmp(function Main(props: any) {
         // The same information flattened, for the README and the generated
         // tests: [{ cmd, op, action, path }].
         actionList: entityActionList(ent),
+        // The ops with a route of their own. `ops` minus those that are
+        // nothing but folded-in actions — what the generated tests consult
+        // before assuming a plain call exists.
+        canonicalOps: canonicalOps(ent),
         // Required fields only: a seed record has to satisfy the shape the
         // SDK will hand back, and optional noise makes the assertions
         // harder to read.
@@ -893,14 +923,20 @@ function ${provider.pluginName}(this: any, options: ${provider.pluginName}Option
   const ACTIONS: Record<string, Record<string, Record<string, string>>> = {
 `)
       each(provider.entities, (e: any) => {
-        Content(`    ${jsKey(e.name)}: {
+        Content(`    [${JSON.stringify(e.name)}]: {
 `)
         each(e.cmds, (cmd: any) => {
           const name = String(cmd.val$ ?? cmd)
           const map = e.actions[name] || {}
           const names = Object.keys(map).sort()
+          // COMPUTED KEYS, not `jsKey`. An action named `__proto__` written
+          // as a plain (or quoted) object-literal key SETS THE PROTOTYPE
+          // instead of creating a property, so the action would vanish from
+          // its own map and be unreachable. A computed key always defines an
+          // own property. apidef derives an action name from a route segment,
+          // and `__proto__` is a legal one.
           Content(`      ${name}: {${names.map((a: string) =>
-            ` ${jsKey(a)}: '${map[a]}'`).join(',')}${0 < names.length ? ' ' : ''}},
+            ` [${JSON.stringify(a)}]: '${map[a]}'`).join(',')}${0 < names.length ? ' ' : ''}},
 `)
         })
         Content(`    },
@@ -915,9 +951,18 @@ function ${provider.pluginName}(this: any, options: ${provider.pluginName}Option
   // not have is a caller mistake worth a message that names what is
   // available; performing a plain save instead is the one outcome that must
   // not happen, because it succeeds and does the wrong thing.
+  // AN OWN PROPERTY, never an inherited one. \`map[name]\` resolves
+  // \`toString\`, \`constructor\`, \`valueOf\` and the rest off Object's
+  // prototype, and each of those is non-null — so the refusal below never
+  // fired and the inherited function was handed to the SDK as an op name.
+  // That is the silent drop in another hat: the caller named something the
+  // entity does not have and was not told. An empty map inherits them all,
+  // so a cmd with no actions was the most exposed.
   function actionop(name: string, entname: string, cmd: string) {
-    const map = (ACTIONS[entname] || {})[cmd] || {}
-    const op = map[name]
+    const own = Object.prototype.hasOwnProperty
+    const ents: any = own.call(ACTIONS, entname) ? ACTIONS[entname] : {}
+    const map: any = own.call(ents, cmd) ? ents[cmd] : {}
+    const op = own.call(map, name) ? map[name] : null
 
     if (null == op) {
       const valid = Object.keys(map).sort()
@@ -995,6 +1040,20 @@ function ${provider.pluginName}(this: any, options: ${provider.pluginName}Option
         // has actions. `actionop` is what refuses an unknown name, so leaving
         // it out where the map is empty would restore the silent drop for
         // exactly the entities most likely to be typed at by mistake.
+        //
+        // IT COMES BEFORE THE PARENT GUARDS, and that ordering is the whole
+        // of its correctness. The guards describe the CANONICAL route —
+        // opParams drops action points when computing them — and an action
+        // route need not be nested the same way: Zoom's canonical update is
+        // `/user/{user_id}/meeting/{id}` while its status action hangs off
+        // `/meeting/{id}`. Guarding first rejected that action for want of a
+        // `user_id` its own URL has no segment for.
+        //
+        // The action path is not left unguarded, it is guarded by the RIGHT
+        // thing: the SDK builds the action's own point and refuses an
+        // unbuildable one with `point_action_invalid`, naming the op and the
+        // action. A call naming no action falls through to the guards exactly
+        // as before.
         const actionBranch = (cmd: string, call: string) => `      const action$ = actionOf(msg)
       if (null != action$) {
         const op$ = actionop(action$, '${e.name}', '${cmd}')
@@ -1007,10 +1066,10 @@ ${call}      }
   ${jsProp('entity', e.name)}.cmd.list.action =
     async function list_${e.name}(this: any, entize: any, msg: any) {
       const q = cleanq(msg.q)
-${guard('list', 'q')}${actionBranch('list',
+${actionBranch('list',
             `        const found = await this.shared.sdk.${e.acc}()[op$](actionq(msg.q, '${rk}', action$))
         return found.map((data: any) => entize(${out('data')}))
-`)}      const list = await this.shared.sdk.${e.acc}().list(q)
+`)}${guard('list', 'q')}      const list = await this.shared.sdk.${e.acc}().list(q)
       return list.map((data: any) => entize(${out('data')}))
     }
 
@@ -1022,10 +1081,10 @@ ${guard('list', 'q')}${actionBranch('list',
   ${jsProp('entity', e.name)}.cmd.load.action =
     async function load_${e.name}(this: any, entize: any, msg: any) {
       const q = cleanq(msg.q)
-${guard('load', 'q')}${actionBranch('load',
+${actionBranch('load',
             `        const hit = await ornull(() => this.shared.sdk.${e.acc}()[op$](actionq(msg.q, '${rk}', action$)))
         return null == hit ? null : entize(${out('hit')})
-`)}      const res = await ornull(() => this.shared.sdk.${e.acc}().load(${sdkArg('load')}))
+`)}${guard('load', 'q')}      const res = await ornull(() => this.shared.sdk.${e.acc}().load(${sdkArg('load')}))
       return null == res ? null : entize(${out('res')})
     }
 
@@ -1062,7 +1121,7 @@ ${guard('load', 'q')}${actionBranch('load',
   ${jsProp('entity', e.name)}.cmd.save.action =
     async function save_${e.name}(this: any, entize: any, msg: any) {
       const data = msg.ent.data$(false)
-${guard('save', 'data')}${alias}      const sdk = this.shared.sdk
+${alias}      const sdk = this.shared.sdk
 
 ${actionBranch('save',
             `        // The action's OWN payload is the entity's own fields — data$(false)
@@ -1071,7 +1130,7 @@ ${actionBranch('save',
         data.$action = action$
         const done = await sdk.${e.acc}()[op$](data)
         return entize(${out('done')})
-`)}${body}
+`)}${guard('save', 'data')}${body}
 
       return entize(${out('res')})
     }
@@ -1080,14 +1139,28 @@ ${actionBranch('save',
         }
 
         if (e.cmds.includes('remove')) {
+          // A REMOVE ACTION ANSWERS FOR ITSELF. The canonical remove has
+          // nothing to hand back — the record is gone — so its handler
+          // returns null and takes no `entize`. An action folded into
+          // `remove` is a different endpoint with a response of its own
+          // (`/meeting/{id}/archive` answers with the archive record), and
+          // the other three cmds all pass an action's response through.
+          // Applying the canonical "return null" to it threw that away, so
+          // the action appeared to succeed and yielded nothing.
+          //
+          // `entize` is therefore named, never `_entize`. Naming it
+          // conditionally on the entity HAVING a remove action does not work
+          // and the type-check says so: the action branch is emitted for
+          // every entity — that is what refuses an unknown `action$` on one
+          // with no actions — so the parameter is always referenced.
           Content(`
   ${jsProp('entity', e.name)}.cmd.remove.action =
-    async function remove_${e.name}(this: any, _entize: any, msg: any) {
+    async function remove_${e.name}(this: any, entize: any, msg: any) {
       const q = cleanq(msg.q)
-${guard('remove', 'q')}${actionBranch('remove',
-            `        await ornull(() => this.shared.sdk.${e.acc}()[op$](actionq(msg.q, '${rk}', action$)))
-        return null
-`)}      await ornull(() => this.shared.sdk.${e.acc}().remove(${sdkArg('remove')}))
+${actionBranch('remove',
+            `        const gone = await ornull(() => this.shared.sdk.${e.acc}()[op$](actionq(msg.q, '${rk}', action$)))
+        return null == gone ? null : entize(${out('gone')})
+`)}${guard('remove', 'q')}      await ornull(() => this.shared.sdk.${e.acc}().remove(${sdkArg('remove')}))
       return null
     }
 

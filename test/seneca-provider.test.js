@@ -297,6 +297,145 @@ main: kit: flow: BasicBadgeFlow: {
 `
 
 
+// AN ENTITY WHOSE ACTION ROUTE IS SHALLOWER THAN ITS CANONICAL ONE.
+//
+// Zoom's shape: the canonical update is `/user/{user_id}/meeting/{id}` and
+// needs the parent, while the `status` action hangs off `/meeting/{id}` and
+// does not. The guards are computed from the CANONICAL points (opParams drops
+// action points), so a guard emitted ahead of the action branch demands a key
+// the action's own route has no segment for.
+//
+// `remove` carries an action too, whose response is the action's own — an
+// archive record, not the deleted meeting.
+const PARENT_ACTION_ENTITY = `
+main: kit: entity: meeting: {
+  alias: field: {}
+  name: "meeting"
+  id: { field: "id", name: "id" }
+  field: {
+    id:    { name: "id",    kind: "field", type: "\`$STRING\`", required: true }
+    topic: { name: "topic", kind: "field", type: "\`$STRING\`", required: true }
+  }
+  fields: [
+    { name: "id",    req: true, type: "\`$STRING\`" }
+    { name: "topic", req: true, type: "\`$STRING\`" }
+  ]
+  op: {
+    list: { name: "list", points: [ {
+      args: { params: [
+        { kind: "param", name: "user_id", orig: "user_id", reqd: true, type: "\`$STRING\`", example: "u01" }
+      ] }
+      method: "GET", orig: "/user/{user_id}/meeting"
+      segments: [{ lit: "user" }, { var: "user_id" }, { lit: "meeting" }]
+      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    load: { name: "load", points: [ {
+      args: { params: [
+        { kind: "param", name: "user_id", orig: "user_id", reqd: true, type: "\`$STRING\`", example: "u01" }
+        { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "m01" }
+      ] }
+      method: "GET", orig: "/user/{user_id}/meeting/{id}"
+      segments: [{ lit: "user" }, { var: "user_id" }, { lit: "meeting" }, { var: "id" }]
+      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    update: {
+      name: "update"
+      points: [
+        {
+          args: {
+            params: [
+              { kind: "param", name: "user_id", orig: "user_id", reqd: true, type: "\`$STRING\`", example: "u01" }
+              { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "m01" }
+            ]
+            body: [ { kind: "body", name: "topic", type: "\`$STRING\`" } ]
+          }
+          method: "PATCH", orig: "/user/{user_id}/meeting/{id}"
+          segments: [{ lit: "user" }, { var: "user_id" }, { lit: "meeting" }, { var: "id" }]
+          transform: { req: "\`reqdata\`", res: "\`body\`" }
+        }
+        {
+          args: {
+            params: [ { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "m01" } ]
+            body: [ { kind: "body", name: "state", type: "\`$STRING\`" } ]
+          }
+          method: "PUT", orig: "/meeting/{id}/status"
+          segments: [{ lit: "meeting" }, { var: "id" }, { lit: "status" }]
+          select: { '$action': "status", exist: [ "id" ] }
+          transform: { req: "\`reqdata\`", res: "\`body\`" }
+        }
+      ]
+    }
+    remove: {
+      name: "remove"
+      points: [
+        {
+          args: { params: [
+            { kind: "param", name: "user_id", orig: "user_id", reqd: true, type: "\`$STRING\`", example: "u01" }
+            { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "m01" }
+          ] }
+          method: "DELETE", orig: "/user/{user_id}/meeting/{id}"
+          segments: [{ lit: "user" }, { var: "user_id" }, { lit: "meeting" }, { var: "id" }]
+          transform: { req: "\`reqdata\`", res: "\`body\`" }
+        }
+        {
+          args: { params: [
+            { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "m01" }
+          ] }
+          method: "POST", orig: "/meeting/{id}/archive"
+          segments: [{ lit: "meeting" }, { var: "id" }, { lit: "archive" }]
+          select: { '$action': "archive", exist: [ "id" ] }
+          transform: { req: "\`reqdata\`", res: "\`body\`" }
+        }
+      ]
+    }
+  }
+}
+
+main: kit: flow: BasicMeetingFlow: {
+  entity: "meeting", kind: "basic", name: "BasicMeetingFlow"
+  step: [ { op: "list" } ]
+}
+`
+
+
+// AN ENTITY WITH A SAVE ACTION, A MUTABLE FIELD AND NO `load` CMD, whose only
+// update point is the action. Nothing here can perform a plain id-bearing
+// save, and nothing can load a record to mutate — so a generated test that
+// does both fails in a package whose supported action works perfectly.
+const NO_LOAD_ENTITY = `
+main: kit: entity: alert: {
+  alias: field: {}
+  name: "alert"
+  id: { field: "id", name: "id" }
+  field: {
+    id:   { name: "id",   kind: "field", type: "\`$STRING\`", required: true }
+    note: { name: "note", kind: "field", type: "\`$STRING\`", required: true }
+  }
+  fields: [
+    { name: "id",   req: true, type: "\`$STRING\`" }
+    { name: "note", req: true, type: "\`$STRING\`" }
+  ]
+  op: {
+    list: { name: "list", points: [ {
+      args: {}, method: "GET", orig: "/alert", segments: [{ lit: "alert" }]
+      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    update: { name: "update", points: [ {
+      args: {
+        params: [ { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "a01" } ]
+        body: [ { kind: "body", name: "note", type: "\`$STRING\`" } ]
+      }
+      method: "POST", orig: "/alert/{id}/ack"
+      segments: [{ lit: "alert" }, { var: "id" }, { lit: "ack" }]
+      select: { '$action': "ack", exist: [ "id" ] }
+      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+  }
+}
+
+main: kit: flow: BasicAlertFlow: {
+  entity: "alert", kind: "basic", name: "BasicAlertFlow"
+  step: [ { op: "list" } ]
+}
+`
+
+
 // Load a GENERATED provider and hand back the entity cmd map it builds.
 //
 // The provider is a plain module: it requires its own package.json and the
@@ -839,6 +978,172 @@ describe('seneca-provider target, from its package', () => {
   })
 
 
+  // REVIEW FINDINGS on the first cut of this mechanism. Each is a way the
+  // action route can still be lost or mis-served after `action$` arrives.
+  describe('actions: review findings', () => {
+
+    let entity
+    let files
+
+    before(async () => {
+      const out = await generateInto(consumer, {
+        model: consumerModel(consumer.sdk,
+          PARENT_ACTION_ENTITY + NO_LOAD_ENTITY),
+      })
+      files = out.files
+      entity = loadProvider(files, 'demo-provider')
+    })
+
+
+    // GUARD ORDERING. The parent guards are computed from the CANONICAL
+    // points — opParams drops action points — so running them ahead of the
+    // action branch demands a key the action's own route has no segment for.
+    // `status` hangs off `/meeting/{id}`, which needs no user_id, but the
+    // canonical `/user/{user_id}/meeting/{id}` does.
+    test('an action shallower than its canonical route is not blocked by the canonical guard',
+      async () => {
+        const calls = []
+        await drive(entity, 'meeting', 'save',
+          saveMsg({ id: 'm1', state: 'ended' }, { action$: 'status' }), calls)
+
+        deepStrictEqual(calls, [['Meeting', 'update',
+          { id: 'm1', state: 'ended', $action: 'status' }]])
+      })
+
+
+    // The same ordering on a read cmd.
+    test('a read action is not blocked by the canonical guard either', async () => {
+      const calls = []
+      await drive(entity, 'meeting', 'remove',
+        { q: { id: 'm1', action$: 'archive' }, ent: {} }, calls)
+
+      strictEqual(calls.length, 1, 'the action call never happened')
+      strictEqual(calls[0][1], 'remove')
+    })
+
+
+    // ...and the guard still fires on a call that named no action, which is
+    // the behaviour it exists for.
+    test('a call naming no action still gets its parent guard', async () => {
+      const calls = []
+      let err = null
+
+      try {
+        await drive(entity, 'meeting', 'save', saveMsg({ id: 'm1' }), calls)
+      }
+      catch (e) { err = e }
+
+      ok(null != err, 'the parent guard stopped firing')
+      ok(/user_id is required/.test(err.message), err.message)
+      deepStrictEqual(calls, [])
+    })
+
+
+    // A REMOVE ACTION'S RESPONSE. `/meeting/{id}/archive` answers with the
+    // archive record; the canonical DELETE answers with nothing, and applying
+    // the canonical behaviour to the action throws its response away.
+    test('a remove action returns its own response', async () => {
+      const calls = []
+      const res = await drive(entity, 'meeting', 'remove',
+        { q: { id: 'm1', action$: 'archive' }, ent: {} }, calls)
+
+      ok(null != res, 'the action response was discarded')
+      deepStrictEqual(res, { id: 'r0' })
+    })
+
+
+    // ...while a plain remove still answers null, unchanged.
+    test('a plain remove still answers null', async () => {
+      const calls = []
+      const res = await drive(entity, 'meeting', 'remove',
+        { q: { id: 'm1', user_id: 'u1' }, ent: {} }, calls)
+
+      strictEqual(res, null)
+      strictEqual(calls[0][1], 'remove')
+    })
+
+
+    // INHERITED NAMES. The action map is an ordinary object, so `map[name]`
+    // resolves `toString`, `constructor` and `__proto__` from Object's
+    // prototype — non-null, so the refusal never fires and the inherited
+    // function is handed to the SDK as an op name. This is the silent-drop
+    // failure mode wearing a different hat: the caller named something the
+    // entity does not have and did not get told.
+    test('an inherited property name is refused, not treated as an action',
+      async () => {
+        for (const name of ['toString', 'constructor', '__proto__',
+          'hasOwnProperty', 'valueOf']) {
+          const calls = []
+          let err = null
+
+          try {
+            await drive(entity, 'meeting', 'save',
+              saveMsg({ id: 'm1' }, { action$: name }), calls)
+          }
+          catch (e) { err = e }
+
+          ok(null != err, name + ' was accepted as an action')
+          ok(/is not an action of this operation/.test(err.message),
+            name + ': ' + err.message)
+          deepStrictEqual(calls, [], name + ' reached the SDK')
+        }
+      })
+
+
+    // The same on a cmd that has no actions at all, where the map is empty
+    // and every name in it is therefore inherited.
+    test('an inherited name is refused on a cmd with no actions', async () => {
+      const calls = []
+      let err = null
+
+      try {
+        await drive(entity, 'meeting', 'list',
+          { q: { user_id: 'u1', action$: 'constructor' }, ent: {} }, calls)
+      }
+      catch (e) { err = e }
+
+      ok(null != err, 'constructor was accepted on an actionless cmd')
+      ok(/\(none\)/.test(err.message), err.message)
+      deepStrictEqual(calls, [])
+    })
+
+
+    // THE PLAIN-SAVE TEST IS GENERATED, NOT UNIVERSAL. `alert` has a save
+    // action, a mutable field, and no `load` cmd — nothing can fetch a record
+    // to mutate, and its only update point is the action, so there is no
+    // plain id-bearing save to make. Emitting the test anyway ships a red
+    // suite to a package whose action works.
+    test('no plain-save test is generated for an entity that cannot perform one',
+      () => {
+        const path = Object.keys(files)
+          .find((p) => /test\/demo-provider\.test\.js$/.test(p))
+        ok(null != path, 'no generated suite:\n  ' +
+          Object.keys(files).join('\n  '))
+
+        const suite = String(files[path])
+
+        ok(!suite.includes("it('alert-save-without-action'"),
+          'a plain-save test was generated for an entity with no load cmd ' +
+          'and no canonical update')
+
+        // It has no load cmd at all, so nothing generated may call load$ on it.
+        ok(!/entity\('provider\/demo\/alert'\)[\s\S]{0,200}?\.load\$/.test(suite),
+          'the generated suite calls load$ on an entity with no load cmd')
+
+        // Its action coverage is still generated — the gate must not take the
+        // action tests with it.
+        ok(suite.includes("it('alert-action-unknown-save'"),
+          'the action tests went with it')
+        ok(suite.includes("it('alert-action-ack'"),
+          'the positive action test went with it')
+
+        // And the entity that CAN perform one still gets it.
+        ok(suite.includes("it('meeting-save-without-action'"),
+          'the plain-save test was dropped for an entity that can perform one')
+      })
+  })
+
+
   // `cmdActions` — which SDK op serves each action of one cmd.
   describe('cmdActions', () => {
 
@@ -882,6 +1187,35 @@ describe('seneca-provider target, from its package', () => {
       deepStrictEqual(cmdActions(ENT, 'list'), {})
       deepStrictEqual(cmdActions(ENT, 'remove'), {})
     })
+
+    // THE CONSTRUCTION HALF of the inherited-property finding. `out[name]`
+    // on a plain object finds `Object.prototype.toString` for an action
+    // literally named `toString`, reads it as "already claimed", and drops
+    // the action — so a modelled endpoint becomes unreachable and nothing
+    // says so. apidef takes an action name from a route segment, and
+    // `/pull/{id}/toString` is a legal route.
+    test('an action carrying an inherited property name is kept', () => {
+      const ent = {
+        name: 'pull',
+        fields: {},
+        op: {
+          update: {
+            name: 'update',
+            points: [
+              { orig: '/pull/{id}' },
+              { orig: '/pull/{id}/toString', select: { $action: 'toString' } },
+              { orig: '/pull/{id}/valueOf', select: { $action: 'valueOf' } },
+            ],
+          },
+        },
+      }
+
+      const map = cmdActions(ent, 'save')
+
+      strictEqual(map.toString, 'update')
+      strictEqual(map.valueOf, 'update')
+    })
+
 
     // An op the model marks inactive generates no SDK method, so an action
     // folded into it is not reachable and must not be advertised as if it
