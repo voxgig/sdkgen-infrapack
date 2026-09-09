@@ -33,6 +33,38 @@ There is no manifest field for that requirement. Nothing in
 `sdkgen-package.json` says "this target needs that one", so this paragraph and
 the error at generation are where the requirement lives.
 
+## Custom actions reach Seneca as `action$`
+
+An API definition folds a non-CRUD verb into an ordinary operation as an
+alternative route — GitHub's `PUT /repos/{owner}/{repo}/pulls/{n}/merge` is a
+second point of the pull request's `update`. The SDK selects one with
+`$action` in the call's argument. Seneca has no operation to add it to, so the
+provider takes it as a directive, spelled the Seneca way:
+
+```js
+const pull = seneca.entity('provider/github/pull')
+
+await pull
+  .make$({ id: 42, owner: 'voxgig', repo: 'sdkgen',
+           commit_title: 'Merge pull request #42' })
+  .directive$({ action$: 'merge' })
+  .save$()
+```
+
+`save$` routes by the operation the action belongs to, not by the command, so
+an action folded into `create` is called as a create even on an entity that
+carries an id. A name the entity does not have throws, naming the valid ones —
+it never falls back to the plain command. Each generated provider lists its own
+actions in its README and its reference.
+
+`make$({ action$ })` does not work and cannot: `seneca-entity`'s `make$` copies
+only keys without a `$`, plus the four directives it knows by name, so any
+other trailing-`$` key is dropped before a store sees it. Use `directive$`, or
+assign the property to an entity you have already made.
+
+Providers generated before this gain their actions on the next regeneration.
+
+
 ## `seneca-provider` generates into its own repository
 
 Unlike a language target, a Seneca provider is not a folder in the SDK
