@@ -8,23 +8,28 @@ you want for an ordinary release.
 `publish-workflow.patch` is the patch that added
 `.github/workflows/publish.yml`, retained so the diff stays reviewable.
 
-## Why a patch and not the file
+## Why a patch and not the file — HISTORICAL
 
 Automation that writes to `.github/workflows/` needs the GitHub App
-`workflows` permission, which the agent that prepared this branch does not
-hold. Shipping the workflow as a patch keeps it reviewable in the diff and
-lets a maintainer apply it with their own credentials.
+`workflows` permission, which the agent that prepared the patch did not
+hold. Shipping the workflow as a patch kept it reviewable in the diff and
+let a maintainer apply it with their own credentials.
 
-## Apply it
+## How it was applied — HISTORICAL, DO NOT RUN
+
+These are the commands that put the workflow on `main`. **`git apply` now
+fails**, because `.github/workflows/publish.yml` already exists — that is
+the expected outcome, not a problem to work around.
 
 ```sh
-git apply release/publish-workflow.patch
+git apply release/publish-workflow.patch   # fails today: the file is already there
 git add .github/workflows/publish.yml
 git commit -m "ci: publish workflow"
 ```
 
-The patch is checked to apply and reverse cleanly against the commit that
-introduced it.
+Kept only so the workflow's provenance is legible. The same mechanism is
+what a future workflow change would need, since the scope limitation has not
+gone away.
 
 ## Bootstrap: the FIRST release cannot use this workflow
 
@@ -46,7 +51,7 @@ and its header says so directly:
 
 So the order is: **publish once by hand, then register, then automate.**
 
-### 1. Publish the first version by hand, once
+### 1. Publish the first version by hand, once — DONE
 
 From a clean checkout of `main`, with npm authenticated (`npm login`), run the
 same gates the workflow would and then publish:
@@ -63,7 +68,7 @@ git tag v1.1.0 && git push origin v1.1.0
 Tag it too, so the registry and the repository agree from the start — every
 later run of the workflow assumes they do.
 
-### 2. Register the trusted publisher
+### 2. Register the trusted publisher — DONE
 
 **npm 12 added a CLI for this**, so it is one command rather than a trip
 through the website:
