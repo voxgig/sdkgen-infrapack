@@ -59,8 +59,6 @@ main: kit: target: 'seneca-provider': {
   # The ts SDK dependency is emitted by Main from the model's published
   # package name, so it is not declared here.
   deps: {
-    '@seneca/maintain':  { active: true, version: '^0.1.0', kind: prod }
-
     '@seneca/env':       { active: true, version: '>=0.4',  kind: peer }
     '@seneca/provider':  { active: true, version: '>=4',    kind: peer }
 
@@ -77,6 +75,14 @@ main: kit: target: 'seneca-provider': {
     'seneca-promisify':  { active: true, version: '>=3',    kind: peer }
 
     '@seneca/doc':       { active: true, version: '^8.0.0', kind: dev }
+
+    # DEV, not prod. Its only use is `require('@seneca/maintain')` in the
+    # GENERATED TEST FILE, beside seneca-msg-test — the repository-hygiene
+    # check the suite runs on itself. Declared prod, every application that
+    # installed a generated provider installed that maintenance tooling and
+    # its tree along with it, for code it never runs.
+    '@seneca/maintain':  { active: true, version: '^0.1.0', kind: dev }
+
     '@types/node':       { active: true, version: '^24.0.0', kind: dev }
     'seneca-msg-test':   { active: true, version: '^4.1.0', kind: dev }
     'typescript':        { active: true, version: '^5.4.5', kind: dev }
