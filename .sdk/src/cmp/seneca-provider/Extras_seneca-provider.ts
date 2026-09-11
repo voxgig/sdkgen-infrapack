@@ -20,14 +20,29 @@ import {
 
 // Does this entity's load op have a real identifying param (path or
 // required query), e.g. GET /result?trace_id=? A paramless GET has none.
-function loadHasKey(ent: any): boolean {
-  const point = (ent.op && ent.op.load && ent.op.load.points || [])[0]
-  if (null == point) return false
-  // apidef states which segments are variables (its ADR-003) — no brace test.
-  const hasPathParam = pointSegments(point).some((seg: any) => null != seg.var)
-  const hasQueryParam = (point.args && point.args.query || [])
-    .some((q: any) => false !== q.reqd)
-  return hasPathParam || hasQueryParam
+function loadHasKey(e: any): boolean {
+  // FROM WHAT THE HANDLER ACTUALLY SENDS (Main's addressKeys), not from the
+  // route's shape. A route can carry parameters and still be a singleton
+  // read: github's `interaction` is `/user/interaction-limits`, and its
+  // sibling `webhook_config` reads one config per app — both are called as
+  // `load({})`, so every id hits the same record and a not-found test
+  // against them asserts the opposite of the truth. Asking the route
+  // whether it has any parameter said yes for both.
+  return true === (e.idaddressed || {}).load
+}
+
+
+// CAN A REMOVE DELETE WHAT A CREATE JUST MADE? A round-trip that ends by
+// asserting the record is gone needs one that can address it.
+//
+// github's `action` is a tag bucket whose ops address different resources:
+// keyed `archive_format` from its download route, removed by
+// `hosted_runner_id` and `org_id`. The remove therefore deleted whichever
+// record the store yielded first — usually a SEEDED one — and the round-trip
+// failed on its own record surviving, intermittently, because the created
+// id is random and its position in iteration order decides.
+function removeAddresses(e: any): boolean {
+  return true === (e.idaddressed || {}).remove
 }
 
 
@@ -73,6 +88,151 @@ function parentPairs(e: any, live: boolean): string {
   return e.parents
     .map((p: string) => live ? `${p}, ` : `${p}: '${parentSeed(e, p)}', `)
     .join('')
+}
+
+
+// A COMPOSITE-KEY ENTITY CARRIES ITS PARENTS INSIDE ITS ID, so a query must
+// NOT also pass them as separate keys — `load$({ owner, id })` is the shape
+// the handler now rejects, because the id it splits already holds the owner.
+// These three keep every emitted test, script and doc addressing such an
+// entity the one way that works.
+function idPartsOf(e: any): string[] {
+  return Array.isArray(e.idparts) && 1 < e.idparts.length ?
+    e.idparts.map((p: any) => String(p)) : []
+}
+
+
+// The Seneca id for one seeded record: the record key for an ordinary
+// entity, and the seeded parts joined for a composite one — `owner0/repo0`
+// where the parts are `owner` (a parent, so its seeded parent id) and `repo`
+// (the record's own key).
+function entIdLiteral(e: any, suffix: string): string {
+  const parts = idPartsOf(e)
+  if (0 === parts.length) {
+    return `${e.name}${suffix}`
+  }
+
+  const sep = null != e.idsep && '' !== String(e.idsep) ? String(e.idsep) : '/'
+  const vals = parts.map((p: string) =>
+    e.parents.includes(p) ? parentSeed(e, p) : `${e.name}${suffix}`)
+
+  // THE SUFFIX MUST SURVIVE, or `-nosuch` names the record that exists.
+  //
+  // A part that is also a parent key takes the parent's seeded value, which
+  // ignores the suffix — and for github's repo BOTH parts are parent keys,
+  // so `entIdLiteral(e, '-nosuch')` returned `owner0/repo0`. The not-found
+  // test then loaded the seeded record and asserted it was null. The last
+  // part is the record's own key, so that is where the suffix belongs.
+  if ('' !== suffix && !vals.some((v: string) => v.endsWith(suffix))) {
+    vals[vals.length - 1] = vals[vals.length - 1] + suffix
+  }
+
+  return vals.join(sep)
+}
+
+
+// Object-literal pairs putting each composite part at its `from` path, as a
+// create must send them. `owner.login` becomes `owner: { login: '...' }`;
+// several parts sharing a prefix are merged into one object.
+function idFromPairs(e: any, suffix: string): string {
+  const parts = idPartsOf(e)
+  const from = e.idfrom || {}
+  const tree: any = {}
+
+  for (const part of parts) {
+    const value = e.parents.includes(part) ?
+      parentSeed(e, part) : `${e.name}${suffix}`
+    const keys = String(from[part] || part).split('.')
+    let node = tree
+    for (let i = 0; i < keys.length - 1; i++) {
+      node[keys[i]] = node[keys[i]] || {}
+      node = node[keys[i]]
+    }
+    node[keys[keys.length - 1]] = value
+  }
+
+  const render = (node: any): string => '{ ' + Object.keys(node)
+    .map((k: string) => `${jsKey(k)}: ${'object' === typeof node[k] ?
+      render(node[k]) : `'${node[k]}'`}`)
+    .join(', ') + ' }'
+
+  return Object.keys(tree)
+    .map((k: string) => `${jsKey(k)}: ${'object' === typeof tree[k] ?
+      render(tree[k]) : `'${tree[k]}'`}`)
+    .join(', ')
+}
+
+
+// Parent pairs for a query, or nothing when the id already carries them.
+function queryPairs(e: any, live: boolean): string {
+  const parts = idPartsOf(e)
+  if (0 === parts.length) {
+    return parentPairs(e, live)
+  }
+
+  // ONLY THE PARTS TRAVEL INSIDE THE ID. A required key that is not one of
+  // them still has to be passed, and dropping every parent because SOME of
+  // them are parts left github's api_insights_summary_stat — keyed
+  // `actor_type/actor_id`, and requiring a `min_timestamp` besides — called
+  // without the timestamp its own handler guards. Its three read tests
+  // failed on the guard rather than on anything they were written to check.
+  const rest = e.parents.filter((p: string) => !parts.includes(p))
+
+  return rest
+    .map((p: string) => live ? `${p}, ` : `${p}: '${parentSeed(e, p)}', `)
+    .join('')
+}
+
+
+// CAN A CREATED RECORD'S COMPOSITE ID BE REBUILT? Only if every part is
+// recoverable, and for a composite entity that is not a given.
+//
+// A create supplies the parts one of two ways: as path parameters of the
+// create route, or in the response. github's repo has NEITHER for its
+// `repo` part — `POST /user/repos` takes no path parameters, and the
+// response names the repository `name`, never `repo`. So there is no honest
+// way to know the id of a repo the API just made, and a create/update/remove
+// round-trip cannot be written against it.
+//
+// THIS IS A MODEL GAP, NOT A TEST TO FORCE. What is missing is a mapping
+// from a path parameter to the response field that carries it (`repo` ->
+// `name`); apidef knows the parameter and the field but nothing relates
+// them. Emitting the round-trip anyway produced a 404 on the update leg that
+// pointed at the mock rather than at the cause, so the honest thing is to
+// leave it out and say why in the generated file.
+//
+// load, load-missing and the malformed-id test are all still emitted: those
+// address an existing record, where the id comes from the caller.
+function compositeRoundTrip(e: any): boolean {
+  const parts = idPartsOf(e)
+  if (0 === parts.length) {
+    return true
+  }
+
+  // EVERY PART PLACED, AND PLACED AT THE TOP LEVEL.
+  //
+  // Placed at all: the model must say where a response carries the part, or a
+  // created record's id cannot be rebuilt by anything.
+  //
+  // Top level: only for the OFFLINE round-trip, and only because of how this
+  // transport matches a write. It takes the keys it matches on from the
+  // request BODY, and a write's addressing parameters no longer travel there
+  // — they go in the entity match, which is what stopped them displacing a
+  // nested response field. So an update finds nothing to pin the record by.
+  //
+  // Widening the transport's key set to the point's required parameters was
+  // tried and over-constrains reads: PullEntity's basic load began matching
+  // on a parameter it had never constrained, and answered 404. The proper
+  // fix is for the transport to take a write's addressing keys from the
+  // resolved path parameters specifically, which is a change to shared
+  // machinery that wants its own validation pass.
+  //
+  // Reads, lists and removes round-trip through a nested part today.
+  const from = e.idfrom || {}
+  return parts.every((p: string) => {
+    const path = from[p]
+    return null != path && '' !== String(path) && !String(path).includes('.')
+  })
 }
 
 
@@ -171,6 +331,9 @@ function mutableField(e: any): string {
 function crudTest(provider: any, e: any, mode: 'offline' | 'live'): string {
   const live = 'live' === mode
   const pairs = parentPairs(e, live)
+  // A composite id already holds the parent keys; passing them again as
+  // separate query fields is the shape the handler now rejects.
+  const qpairs = queryPairs(e, live)
   // Seneca's key, not the API's: this test drives seneca.entity(...), whose
   // query and entity always spell the id `id`. The provider translates to
   // whatever the API calls it.
@@ -185,13 +348,81 @@ function crudTest(provider: any, e: any, mode: 'offline' | 'live'): string {
     f.name !== idf && 'id' !== f.name && !e.parents.includes(f.name)).length ?
     seedLiteral(e, 'crud') : ''
 
+  // A COMPOSITE RECORD MUST BE CREATED IN THE SHAPE IT COMES BACK IN.
+  //
+  // The offline transport echoes what a create sent, so a create that sends
+  // its parts flat produces a record whose id cannot be read back — `from`
+  // looks for github's owner at `owner.login` and finds a bare string. The
+  // parts therefore go in at their `from` paths, appended AFTER the field
+  // literal so they win over the flat pair the seed emitted.
+  //
+  // The record key gets its own value rather than the seed's, so a created
+  // record is distinguishable from a seeded one in the same store.
+  const idmake = 0 === idPartsOf(e).length ? '' :
+    ', ' + idFromPairs(e, '-crud')
+
+  // NOT EVERY WRITABLE ENTITY IS READABLE. github's `app` declares create,
+  // update, remove and list — and no load at all, because the API offers no
+  // route that reads one app back. The round-trip read `ent.load$(...)` on
+  // nine such entities, got the null the provider correctly returns for a
+  // cmd it does not implement, and died on `loaded.id` — so the write path
+  // those tests existed to cover went unexercised.
+  //
+  // What can be checked still is: the update runs on the created entity
+  // itself, and the remove runs. What cannot be checked is stated in the
+  // file rather than quietly dropped.
+  const hasLoad = e.cmds.includes('load')
+
+  const body = hasLoad ? `${ind}  try {
+${ind}    const loaded = await ent.load\$({ ${qpairs}${idf}: id })
+${ind}    assert.equal(loaded.${idf}, id)
+${
+    '' === mut ? '' :
+      `
+${ind}    // An entity CARRYING an id is an update, not a second create.
+${ind}    loaded.${mut} = 'crud-${mut}-2'
+${ind}    const updated = await loaded.save\$()
+
+${ind}    assert.equal(updated.${idf}, id)
+${ind}    assert.equal(updated.${mut}, 'crud-${mut}-2')
+
+${ind}    const reloaded = await ent.load\$({ ${qpairs}${idf}: id })
+${ind}    assert.equal(reloaded.${mut}, 'crud-${mut}-2')
+`}${ind}  }
+${ind}  finally {
+${ind}    // Always clean up. The mock and the server both hold data for the
+${ind}    // process lifetime, so a leaked record changes what later tests see.
+${ind}    await ent.remove\$({ ${qpairs}${idf}: id })
+${ind}  }
+
+${ind}  // remove is real: the record is gone, and reading it is an ordinary
+${ind}  // not-found rather than an error.
+${ind}  assert.equal(await ent.load\$({ ${pairs}${idf}: id }), null)
+` : `${ind}  // This ${e.name} has no load cmd: the API offers no route that reads
+${ind}  // one back, so the record cannot be re-read here and the remove cannot
+${ind}  // be confirmed by a follow-up read. The write path is still exercised.
+${ind}  try {
+${
+    '' === mut ? '' :
+      `${ind}    // An entity CARRYING an id is an update, not a second create.
+${ind}    made.${mut} = 'crud-${mut}-2'
+${ind}    const updated = await made.save\$()
+
+${ind}    assert.equal(updated.${idf}, id)
+${ind}    assert.equal(updated.${mut}, 'crud-${mut}-2')
+`}${ind}  }
+${ind}  finally {
+${ind}    await ent.remove\$({ ${qpairs}${idf}: id })
+${ind}  }
+`
+
   return `${ind}it('${e.name}-crud', async (${live ? 't' : ''}) => {
 ${live ? `${ind}  if (!live) return t.skip(noServer())\n` : ''}${ind}  const seneca = await ${mk}
 ${ind}  const ent = seneca.entity('provider/${provider.lower}/${e.name}')
 
 ${setup}${ind}  // Seneca's convention: an entity WITHOUT an id is a create. The API
 ${ind}  // assigns the id itself, so the saved record comes back with one it chose.
-${ind}  const made = await ent.make$({ ${pairs}${made} }).save$()
+${ind}  const made = await ent.make$({ ${pairs}${made}${idmake} }).save$()
 
 ${ind}  assert.ok(null != made.${idf})
 ${ind}  assert.equal(
@@ -201,32 +432,7 @@ ${ind}  )
 
 ${ind}  const id = made.${idf}
 
-${ind}  try {
-${ind}    const loaded = await ent.load\$({ ${pairs}${idf}: id })
-${ind}    assert.equal(loaded.${idf}, id)
-${
-  '' === mut ? '' :
-  `
-${ind}    // An entity CARRYING an id is an update, not a second create.
-${ind}    loaded.${mut} = 'crud-${mut}-2'
-${ind}    const updated = await loaded.save\$()
-
-${ind}    assert.equal(updated.${idf}, id)
-${ind}    assert.equal(updated.${mut}, 'crud-${mut}-2')
-
-${ind}    const reloaded = await ent.load\$({ ${pairs}${idf}: id })
-${ind}    assert.equal(reloaded.${mut}, 'crud-${mut}-2')
-`}${ind}  }
-${ind}  finally {
-${ind}    // Always clean up. The mock and the server both hold data for the
-${ind}    // process lifetime, so a leaked record changes what later tests see.
-${ind}    await ent.remove\$({ ${pairs}${idf}: id })
-${ind}  }
-
-${ind}  // remove is real: the record is gone, and reading it is an ordinary
-${ind}  // not-found rather than an error.
-${ind}  assert.equal(await ent.load\$({ ${pairs}${idf}: id }), null)
-${ind}})
+${body}${ind}})
 
 `
 }
@@ -266,9 +472,23 @@ function seedLiteral(e: any, tag: string): string {
 function seedRecord(e: any, idx: number): Record<string, any> {
   const out: Record<string, any> = {}
 
+  // The field the API's routes address this record by. `e.idf` is null
+  // whenever the load match has no `id` at all, which is exactly the case
+  // this seed was getting wrong, so prefer the route-derived key.
+  const rkey = e.rk || e.idf || 'id'
+
   for (const f of e.fields) {
-    if ('id' === f.name || f.name === e.idf) {
+    if (f.name === rkey) {
       out[f.name] = `${e.name}${idx}`
+    }
+    // AN `id` THAT IS NOT THE ADDRESSING KEY IS SEEDED DISTINCTLY. Seeding
+    // both the same value made the offline suite unable to tell a provider
+    // that addresses records correctly from one that confuses the API's own
+    // `id` with the key its routes take — the seed agreed with either. Real
+    // GitHub never returns that: a pull has a global database `id` AND a
+    // repo-scoped `number`, and they differ.
+    else if ('id' === f.name) {
+      out[f.name] = `${e.name}-apiid-${idx}`
     }
     else if (e.parents.includes(f.name)) {
       // A nested entity's parent id must match a record the parent seeds, or
@@ -300,7 +520,76 @@ function seedRecord(e: any, idx: number): Record<string, any> {
     }
   }
 
+  // THE ADDRESSING KEY IS ALWAYS PRESENT, even when the response schema has
+  // no field of that name.
+  //
+  // The offline transport is a store, and it can only answer a request by
+  // matching the request's own parameters against a stored record
+  // (TestFeature.buildArgs). github reads an org's artifact retention from
+  // `/orgs/{org}/actions/permissions/artifact-and-log-retention`, whose body
+  // is `{days, maximum_allowed_days}` — no org anywhere in it. The loop
+  // above stamps the key only onto a field that already exists, so such a
+  // record was seeded with nothing the provider addresses it by, every
+  // offline load of it answered 404, and forty-one generated tests failed on
+  // a null they could not have avoided.
+  //
+  // This is a property of the mock, not a claim about the API: a real
+  // response need not echo the path parameter that selected it, which is
+  // why the handler carries the request's own values across into the id
+  // rather than reading them back off the body.
+  if ('' !== String(rkey) && null == out[rkey] &&
+    0 === (Array.isArray(e.idparts) ? e.idparts.length : 0)) {
+    out[rkey] = e.parents.includes(rkey) ?
+      parentSeed(e, rkey) : `${e.name}${idx}`
+  }
+
+  // THE SEED MODELS THE REAL RESPONSE, through the same `from` mapping the
+  // runtime reads. github's repo owner goes to `owner.login` and its name to
+  // `name`, because that is where the API puts them — so a record the mock
+  // returns is identifiable by exactly the code that identifies a real one.
+  //
+  // This only works because the offline transport now matches a request
+  // parameter against `id.from` as well as against its own name
+  // (TestFeature.buildArgs). Seeding this shape before that landed made
+  // every composite record unfindable: the mock looked for a field called
+  // `owner` and found an object.
+  seedIdParts(e, out, idx)
+
   return out
+}
+
+
+
+
+// Write each composite part's seeded value into the record at the path the
+// model says carries it, creating the intermediate objects a dotted path
+// implies. A part that is a PARENT key takes the parent's seeded id, so a
+// nested composite record still lines up with its parent.
+function seedIdParts(e: any, out: Record<string, any>, idx: number): void {
+  const parts: string[] = Array.isArray(e.idparts) && 1 < e.idparts.length ?
+    e.idparts.map((p: any) => String(p)) : []
+  if (0 === parts.length) {
+    return
+  }
+
+  const from = e.idfrom || {}
+
+  for (const part of parts) {
+    const path = String(from[part] || part)
+    const value = e.parents.includes(part) ?
+      parentSeed(e, part) : `${e.name}${idx}`
+
+    const keys = path.split('.')
+    let node: any = out
+    for (let i = 0; i < keys.length - 1; i++) {
+      const k = keys[i]
+      if (null == node[k] || 'object' !== typeof node[k] || Array.isArray(node[k])) {
+        node[k] = {}
+      }
+      node = node[k]
+    }
+    node[keys[keys.length - 1]] = value
+  }
 }
 
 
@@ -480,9 +769,9 @@ describe('${provider.fileBase}', () => {
     const seneca = await makeSeneca()
     const found = await seneca
       .entity('provider/${provider.lower}/${e.name}')
-      .load$('${e.name}0')
+      .load$('${entIdLiteral(e, '0')}')
 
-    assert.equal(found.${e.idf || 'id'}, '${e.name}0')
+    assert.equal(found.${e.idf || 'id'}, '${entIdLiteral(e, '0')}')
     assert.equal(
       found.canon$({ string: true }),
       'provider/${provider.lower}/${e.name}',
@@ -493,7 +782,7 @@ describe('${provider.fileBase}', () => {
           // Paramless read (e.g. GET /usage): every id "misses" the same
           // way a hit does -- the mock has nothing to filter by -- so a
           // load-missing test would just assert the happy path again.
-          if (loadHasKey(e.ent)) {
+          if (loadHasKey(e)) {
             Content(`
   // A 404 from a single-item read is an ordinary "not found" answer, not a
   // failure: the provider turns it into null rather than letting the SDK
@@ -502,7 +791,7 @@ describe('${provider.fileBase}', () => {
     const seneca = await makeSeneca()
     const missing = await seneca
       .entity('provider/${provider.lower}/${e.name}')
-      .load$('nosuch${e.name}')
+      .load$('${entIdLiteral(e, '-nosuch')}')
 
     assert.equal(missing, null)
   })
@@ -515,6 +804,53 @@ describe('${provider.fileBase}', () => {
       // A nested entity cannot build its path without the parent id. That is
       // the mistake this target exists to make impossible, so pin it.
       each(nested, (e: any) => {
+        // A COMPOSITE-KEY ENTITY HAS NO SEPARATE PARENT GUARD to pin: its
+        // parents travel inside the id, so `need_<e>_<parent>` is not
+        // emitted and there is nothing that could throw "<parent> is
+        // required". What replaces it is a malformed id, which splitid_<e>
+        // refuses by name — so pin THAT instead, and keep the property the
+        // original test was defending: an incomplete address never reaches
+        // the API.
+        if (0 < idPartsOf(e).length) {
+          const sep = null != e.idsep && '' !== String(e.idsep) ? String(e.idsep) : '/'
+          const shape = idPartsOf(e).join(sep)
+          // The separator is a SLASH, and this goes inside a regex literal:
+          // unescaped it closes the literal early and the emitted test is a
+          // syntax error ("Invalid regular expression flags"). Escape every
+          // regex metacharacter, not just the slash, so a future separator
+          // cannot reintroduce this.
+          const shapeRe = shape.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&')
+          const cmd = ['load', 'remove', 'update'].find((op: string) =>
+            e.cmds.includes('remove' === op ? 'remove' : 'load' === op ? 'load' : 'save'))
+
+          if (null != cmd) {
+            // THE OTHER REQUIRED KEYS STILL TRAVEL. A composite id carries
+            // the parts and nothing else, so an entity that also requires a
+            // plain query key — github's api_insights_summary_stat needs a
+            // `min_timestamp` besides its `actor_type/actor_id` — tripped
+            // that guard first and this test asserted the wrong refusal.
+            const rest = queryPairs(e, false)
+            const call = 'remove' === cmd ?
+              `remove$({ ${rest}id: 'incomplete' })` :
+              `load$({ ${rest}id: 'incomplete' })`
+
+            Content(`
+  // This ${e.name} is addressed by \`${shape}\`, so an id that is not all
+  // of those parts cannot build a request. It is refused here rather than
+  // sent as a URL that would address the wrong record.
+  it('${e.name}-needs-full-id', async () => {
+    const seneca = await makeSeneca()
+
+    await assert.rejects(
+      () => seneca.entity('provider/${provider.lower}/${e.name}').${call},
+      /id must be '${shapeRe}'/,
+    )
+  })
+
+`)
+          }
+        }
+
         // EVERY parent key, not just the first. An entity nested two levels
         // deep is guarded on both, so a test supplying only the alphabetically
         // first tripped the second guard and failed on the code it was meant
@@ -532,9 +868,21 @@ describe('${provider.fileBase}', () => {
         const guardOp = ['list', 'load', 'update', 'remove']
           .find((op: string) => (e.opParents[op] || []).includes(key))
 
-        if (null != guardOp) {
-          const call = 'list' === guardOp ?
-            `${guardOp}$({})` : `${guardOp}$({ id: '${e.name}0' })`
+        // Not for a composite key: there is no separate parent guard to
+        // trip, because the parents live inside the id. needs-full-id above
+        // is what pins the same property for those entities.
+        if (null != guardOp && 0 === idPartsOf(e).length) {
+          // SENECA HAS NO `update$`. The entity cmds are load$/save$/list$/
+          // remove$, and an update is a `save$` on an entity that CARRIES an
+          // id — that is the whole convention this provider is built on.
+          // Emitting `update$({id})` produced eight tests that failed with
+          // "update$ is not a function", so they asserted nothing about the
+          // guard they were written for.
+          const call =
+            'list' === guardOp ? `${guardOp}$({})` :
+              'update' === guardOp ?
+                `make$({ id: '${entIdLiteral(e, '0')}' }).save$()` :
+                `${guardOp}$({ id: '${entIdLiteral(e, '0')}' })`
 
           Content(`
   it('${e.name}-needs-${key}', async () => {
@@ -567,7 +915,9 @@ describe('${provider.fileBase}', () => {
       list[0].canon$({ string: true }),
       'provider/${provider.lower}/${e.name}',
     )
-    assert.equal(list[0].${key}, '${parentSeed(e, key)}')
+    ${0 < idPartsOf(e).length ?
+      `assert.equal(list[0].id, '${entIdLiteral(e, '0')}')` :
+      `assert.equal(list[0].${key}, '${parentSeed(e, key)}')`}
   })
 
 `)
@@ -582,24 +932,24 @@ describe('${provider.fileBase}', () => {
     const seneca = await makeSeneca()
     const found = await seneca
       .entity('provider/${provider.lower}/${e.name}')
-      .load$({ ${pairs}, id: '${e.name}0' })
+      .load$({ ${queryPairs(e, false)}id: '${entIdLiteral(e, '0')}' })
 
-    assert.equal(found.id, '${e.name}0')
+    assert.equal(found.id, '${entIdLiteral(e, '0')}')
     assert.equal(
       found.canon$({ string: true }),
       'provider/${provider.lower}/${e.name}',
     )
   })
-
+${!loadHasKey(e) ? '' : `
 
   it('${e.name}-load-missing', async () => {
     const seneca = await makeSeneca()
     const missing = await seneca
       .entity('provider/${provider.lower}/${e.name}')
-      .load$({ ${pairs}, id: 'nosuch${e.name}' })
+      .load$({ ${queryPairs(e, false)}id: '${entIdLiteral(e, '-nosuch')}' })
 
     assert.equal(missing, null)
-  })
+  })`}
 
 `)
         }
@@ -612,8 +962,48 @@ describe('${provider.fileBase}', () => {
       // transport implements create/update/remove, so this needs no server.
       each(provider.entities, (e: any) => {
         if (e.cmds.includes('save') && e.cmds.includes('remove')) {
-          Content(`
+          if (compositeRoundTrip(e) && removeAddresses(e)) {
+            Content(`
 ` + crudTest(provider, e, 'offline'))
+          }
+          else if (!removeAddresses(e)) {
+            // Said in the file rather than silently omitted: a missing test
+            // that nobody can see is how a gap becomes permanent.
+            Content(`
+  // NO ${e.name} create/update/remove round-trip: THE REMOVE CANNOT ADDRESS
+  // ONE RECORD.
+  //
+  // The key is \`${0 < idPartsOf(e).length ?
+              idPartsOf(e).join(String(e.idsep || '/')) : e.rk}\`, and the remove route does not take it. It
+  // addresses ${0 === e.parents.length ? 'nothing more specific' :
+                '\`' + e.parents.join('\`, \`') + '\` and no further'}, so a
+  // remove deletes whichever record the API answers with rather than the one
+  // this test created — offline, usually a SEEDED record, leaving the
+  // round-trip to fail on its own record surviving.
+  //
+  // This befalls an entity whose ops address DIFFERENT resources, which a
+  // tag-derived entity can. Reads and lists are unaffected.
+
+`)
+          }
+          else {
+            Content(`
+  // NO ${e.name} create/update/remove round-trip. This API addresses a
+  // ${e.name} by \`${idPartsOf(e).join(String(e.idsep || '/'))}\`, and at least
+  // one of those parts is carried NESTED in a response
+  // (${Object.keys(e.idfrom || {}).filter((k: string) =>
+              String((e.idfrom || {})[k]).includes('.'))
+              .map((k: string) => k + ' at ' + (e.idfrom || {})[k]).join(', ')}).
+  //
+  // Reads, lists and removes work: they address a record and never rewrite
+  // it. A create or update cannot, offline — the SDK takes path parameters
+  // from the same object as the request body, so the flat value the URL
+  // needs displaces the nested one the response shape requires, and this
+  // transport echoes a create and merges an update. Against the real API,
+  // where the two are separate, the cycle is fine.
+
+`)
+          }
         }
       })
 
@@ -695,7 +1085,7 @@ describe('${provider.fileBase}', () => {
     const seneca = await makeSeneca()
     const ent = seneca.entity('provider/${provider.lower}/${e.name}')
 
-    const loaded = await ent.load$({ ${pairs}id: '${e.name}0' })
+    const loaded = await ent.load$({ ${queryPairs(e, false)}id: '${entIdLiteral(e, '0')}' })
     loaded.${mut} = 'plain-${mut}'
     const saved = await loaded.save$()
 
@@ -812,7 +1202,7 @@ describe('${provider.fileBase}', () => {
         // honest way to get one.
         each(provider.entities, (e: any) => {
           if (e.cmds.includes('save') && e.cmds.includes('remove') &&
-            liveParentsResolvable(provider, e)) {
+            liveParentsResolvable(provider, e) && compositeRoundTrip(e)) {
             Content(crudTest(provider, e, 'live'))
           }
         })
@@ -1434,8 +1824,26 @@ await seneca.ready()
 `)
     }
     if (subject.cmds.includes('load')) {
+      // THE FIRST RUNNABLE EXAMPLE HAS TO RUN. `load$('some-id')` passes a
+      // bare id and nothing else, but the generated handler calls
+      // `need_<entity>_<parent>()` on every parent key before it reaches the
+      // SDK — so for any entity that has one, the README's opening example
+      // threw `<entity> load: <parent> is required`. Show the object form
+      // with the parent keys the handler actually enforces; the bare-string
+      // form stays for a parentless entity, where it is correct and shorter.
+      // A COMPOSITE KEY IS ONE STRING, not a bag of keys. Its parents travel
+      // inside the id, so the object form with them alongside is the shape
+      // its own handler rejects — the example has to show the joined id.
+      const cparts = idPartsOf(subject)
+      const loadArg = 0 < cparts.length ?
+        `'${cparts.map((p: string) => 'some-' + p).join(
+          null != subject.idsep && '' !== String(subject.idsep) ?
+            String(subject.idsep) : '/')}'` :
+        0 === subject.parents.length ? `'some-id'` :
+          `{ ` + subject.parents.map((p: string) => `${p}: 'some-${p}'`).join(', ') +
+          `, id: 'some-id' }`
       Content(`const ${subject.name} = await seneca
-  .entity('provider/${provider.lower}/${subject.name}').load$('some-id')
+  .entity('provider/${provider.lower}/${subject.name}').load$(${loadArg})
 `)
     }
     Content(`\`\`\`
@@ -2476,16 +2884,33 @@ const DocHowto = cmp(function DocHowto(props: any) {
 
   const key = (k: string) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k) ? k : `'${k}'`
 
-  const literal = (rec: Record<string, any>) => {
-    const names = Object.keys(rec)
-    if (0 === names.length) {
-      return '{}'
+  // SERIALISE, DO NOT COERCE. `String(value)` renders an object as
+  // `[object Object]` and an empty array as the empty string, so a field of
+  // either kind turned the documented create recipe into a syntax error
+  // (`code_of_conduct: [object Object]`, `labels: ,`). Every value a seed
+  // record can hold — string, number, boolean, array, plain object — now
+  // emits as the JS literal it claims to be, recursively, so a reader can
+  // copy the block and run it.
+  const jsval = (v: any): string => {
+    if (null === v || undefined === v) {
+      return 'null'
     }
-    return '{ ' + names
-      .map((k) => `${key(k)}: ` +
-        ('string' === typeof rec[k] ? `'${rec[k]}'` : String(rec[k])))
-      .join(', ') + ' }'
+    if ('string' === typeof v) {
+      // Escape what would otherwise end the literal early.
+      return `'${v.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n')}'`
+    }
+    if ('number' === typeof v || 'boolean' === typeof v) {
+      return String(v)
+    }
+    if (Array.isArray(v)) {
+      return 0 === v.length ? '[]' : '[' + v.map(jsval).join(', ') + ']'
+    }
+    const ks = Object.keys(v)
+    return 0 === ks.length ? '{}' :
+      '{ ' + ks.map((k) => `${key(k)}: ${jsval(v[k])}`).join(', ') + ' }'
   }
+
+  const literal = (rec: Record<string, any>) => jsval(rec)
 
   // What a create sends: the seeded record without its id, because the id is
   // the API's to assign. Parent keys stay — a nested write carries them in

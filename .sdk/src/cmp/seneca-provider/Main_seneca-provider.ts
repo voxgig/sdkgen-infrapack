@@ -156,6 +156,42 @@ function requiredKeys(ent: any, opname: string): string[] {
 }
 
 
+// The keys a single-record call actually sends: the op's required keys, plus
+// the record's own key when the match declares it at all. One definition,
+// because the handler emitter and the test emitter disagreeing about it is
+// how a test comes to assert something the generated code never does.
+function addressKeys(ent: any, opname: string): string[] {
+  const keys = requiredKeys(ent, opname)
+  const parts = idParts(ent)
+
+  if (0 < parts.length) {
+    // EVERY PART, required or not — for the same reason a single record key
+    // always travels. github's api_insights_summary_stat is keyed
+    // `actor_type/actor_id` and declares both OPTIONAL, because the op also
+    // covers routes that take neither; only `min_timestamp` came through as
+    // required. So the call sent the timestamp alone, the split id went
+    // nowhere, and every read answered with the same record — the composite
+    // half of the defect fixed below for single keys.
+    const shape = opRequestShape(ent, opname).items
+    for (const part of parts) {
+      if (!keys.includes(part) &&
+        shape.some((it: any) => it.name === part)) {
+        keys.push(part)
+      }
+    }
+    return keys
+  }
+
+  const rk = recordKey(ent)
+  if (null != rk && '' !== rk && !keys.includes(rk) &&
+    opRequestShape(ent, opname).items.some((it: any) => it.name === rk)) {
+    keys.push(rk)
+  }
+
+  return keys
+}
+
+
 // The key that addresses ONE record.
 //
 // `entityIdField` answers whenever the model declares one, which apidef does
@@ -176,6 +212,60 @@ function requiredKeys(ent: any, opname: string): string[] {
 // record (base_id, table_id, record_id) alphabetizes with table_id last,
 // so the old `params[params.length - 1]` picked the wrong parent as the
 // record's own key. The point's own `parts` still has the true order.
+// The path parameters that TOGETHER name one record, when no single one does.
+//
+// apidef sets `id.parts` for an API that addresses a record by several
+// adjacent path parameters — github needs {owner} AND {repo} to name a
+// repository — and `id.sep` (a slash) joins them into the ONE id a Seneca
+// entity carries. Empty for the ordinary single-key entity, which is most of
+// them, so every caller can branch on `0 < parts.length`.
+function idParts(ent: any): string[] {
+  const parts = ent?.id?.parts
+  return Array.isArray(parts) && 1 < parts.length ?
+    parts.map((p: any) => String(p)) : []
+}
+
+
+function idSep(ent: any): string {
+  const sep = ent?.id?.sep
+  return null != sep && '' !== String(sep) ? String(sep) : '/'
+}
+
+
+// THE ONE DESCRIPTION OF AN ENTITY'S ID, or null when Seneca's `id` and the
+// API's key already agree and nothing needs translating.
+//
+// It unifies the two cases that used to be handled by separate emitters. A
+// compound key (`{owner}/{repo}`) has several parts; an API that simply calls
+// its key something else (`repo`, `number`) has exactly one. Neither needs a
+// different algorithm — a one-part split is the identity, and a one-part join
+// is the old carry-across — so both come through the same table and the same
+// two functions.
+//
+// `from` is passed through as the model states it: which response field
+// carries each part. apidef derives it and guide.aon can correct it.
+function idSpec(ent: any): { parts: string[], sep: string, from?: Record<string, string> } | null {
+  const parts = idParts(ent)
+  if (0 < parts.length) {
+    const from = ent?.id?.from
+    return {
+      parts,
+      sep: idSep(ent),
+      ...(null != from && 'object' === typeof from ? { from } : {}),
+    }
+  }
+
+  const rk = recordKey(ent)
+  if ('id' === rk) {
+    return null
+  }
+
+  // A single-key entity whose key is not `id`. `from` defaults to the key's
+  // own name, which is what the old carry-across read.
+  return { parts: [rk], sep: idSep(ent) }
+}
+
+
 function recordKey(ent: any): string {
   const idf = entityIdField(ent)
   if (null != idf && '' !== idf) {
@@ -434,6 +524,53 @@ const Main = cmp(function Main(props: any) {
         cls: entityClassName(ent, entityColl),
         ops: entityOps(ent),
         idf: entityIdField(ent),
+        // The field this API's routes actually ADDRESS a record by, which is
+        // not always `id` and is not always what entityIdField answers (that
+        // returns null when the load match has no `id`, leaving recordKey to
+        // read the route's last variable segment). The doc and test emitters
+        // in Extras need the same answer the handler emitters use, or the
+        // seed they build is keyed by a field the routes never look at.
+        rk: recordKey(ent),
+        // The composite key, when this API addresses a record by several
+        // path params at once. The doc and test emitters in Extras need the
+        // same answer the handler emitters use: a test that addresses a
+        // composite entity the single-key way builds a query its own handler
+        // rejects.
+        idparts: idParts(ent),
+        idsep: idSep(ent),
+        // DOES EACH SINGLE-RECORD OP ACTUALLY CARRY THE RECORD'S KEY?
+        //
+        // Only then can a wrong id miss on a LOAD: github's `interaction`
+        // reads `/user/interaction-limits` — a singleton, called as
+        // `load({})` — so `load$('no-such-id')` correctly returns the one
+        // record there is, and a not-found test against it asserts the
+        // opposite of the truth.
+        //
+        // And only then can a REMOVE delete what a create just made. A
+        // tag-bucket entity can have ops addressing different resources
+        // entirely: github's `action` is keyed `archive_format` from its
+        // download route while its remove takes `hosted_runner_id` and
+        // `org_id`, so the remove addressed by parent scope alone — it
+        // deleted whichever record the store happened to yield first, which
+        // was usually a SEEDED one, and the round-trip failed on the record
+        // it had created surviving. Intermittently: the created record's id
+        // is random, so where it falls in iteration order decides.
+        //
+        // Parent keys alone do not distinguish records, which is why this
+        // asks for the record's key or every composite part rather than
+        // merely for "the route has a parameter".
+        idaddressed: ['load', 'remove', 'update'].reduce(
+          (acc: Record<string, boolean>, opname: string) => {
+            const keys = addressKeys(ent, opname)
+            const parts = idParts(ent)
+            acc[opname] = 0 < parts.length ?
+              parts.every((p: string) => keys.includes(p)) :
+              keys.includes(recordKey(ent))
+            return acc
+          }, {}),
+        // Where each part is carried in a response. The test emitter needs
+        // it to know whether a created record's id can be rebuilt at all.
+        idfrom: (ent?.id?.from) || {},
         parents,
         parentOf,
         opParents,
@@ -699,7 +836,16 @@ const PackageJson = cmp(function PackageJson(props: any) {
     },
     // What actually ships. Without `files`, `npm publish` packs the test
     // suite and build output into the tarball.
-    files: ['dist', 'src/**/*.ts', 'LICENSE'],
+    //
+    // `doc` IS PART OF THE PACKAGE. The generated README links to
+    // doc/tutorial.md, doc/how-to.md, doc/reference.md and
+    // doc/explanation.md with relative paths, so omitting it published a
+    // README whose every documentation link 404s for anyone reading the
+    // installed package rather than the repository. Either the links become
+    // absolute repository URLs or the files ship; they ship, because the
+    // docs describe the exact version installed and a URL would drift to
+    // whatever main says later.
+    files: ['dist', 'doc', 'src/**/*.ts', 'LICENSE'],
     engines: { node: '>=24' },
     dependencies: {
       // The SDK this plugin wraps, by its PUBLISHED name and version.
@@ -892,21 +1038,136 @@ function ${provider.pluginName}(this: any, options: ${provider.pluginName}Option
       // needs translating in both directions, or `load$` requests a record
       // keyed `undefined` and every entity handed back has no id at all — one
       // that cannot then be saved or removed.
-      const aliased = provider.entities.filter((e: any) => 'id' !== recordKey(e.ent))
-      each(aliased, (e: any) => {
-        const rk = recordKey(e.ent)
-        Content(`  // This API keys a ${e.name} by \`${rk}\`, Seneca by \`id\`. Carry the
-  // API's key across so the Seneca entity has one.
-  function id_${e.name}(data: any) {
-    if (null != data && null == data.id) {
-      data.id = ${jsProp('data', rk)}
+      // ID TRANSLATION, ONE ALGORITHM AND A TABLE.
+      //
+      // Seneca entities carry exactly one `id`. Plenty of APIs do not: they
+      // key a record by a differently-named field (`repo`, `number`), or by
+      // SEVERAL path parameters at once with no single one that is the id
+      // (github's `/repos/{owner}/{repo}`). Both need translating in both
+      // directions, or `load$` asks for a record keyed `undefined` and every
+      // record handed back has no id to save or remove it by.
+      //
+      // The LOGIC is the same for every API; only which parameters, which
+      // separator and where they live in a response differ, and those are
+      // model data. So this emits one `splitid`, one `joinid` and a table —
+      // not a bespoke pair of functions per entity, which is what it used to
+      // do and which duplicated the same algorithm N times over.
+      const translated = provider.entities.filter((e: any) => null != idSpec(e.ent))
+
+      if (0 < translated.length) {
+        const rows = translated.map((e: any) => {
+          const spec: any = idSpec(e.ent)
+          const from = null == spec.from ? '' :
+            `, from: { ${Object.keys(spec.from).sort()
+              .map((k: string) => `${jsKey(k)}: '${spec.from[k]}'`).join(', ')} }`
+          return `    ${jsKey(e.name)}: { parts: [${
+            spec.parts.map((p: string) => `'${p}'`).join(', ')}], sep: '${spec.sep}'${from} },`
+        }).join('\n')
+
+        Content(`  // HOW EACH ENTITY'S id MAPS TO THE API'S OWN KEYS, from the model.
+  //
+  // \`parts\`  the path parameters that address one record, in path order.
+  //          One part is the ordinary case: the API just calls its key
+  //          something other than \`id\`. Two or more is a compound key,
+  //          where no single parameter names the record.
+  // \`sep\`    joins the parts into the one id a Seneca entity carries. A
+  //          slash cannot occur inside a path segment, so the join is
+  //          unambiguous and the split cannot over-split.
+  // \`from\`   where each part's value lives in a RESPONSE, as a dotted
+  //          path. A path parameter's name is not generally a response
+  //          field's name: github returns a repo's owner as an OBJECT
+  //          (\`owner.login\`) and its name as \`name\`, never \`repo\`.
+  //          A part missing here cannot be read back off a response.
+  const ID_SPEC: Record<string, { parts: string[], sep: string, from?: Record<string, string> }> = {
+${rows}
+  }
+
+
+  // Read a dotted path out of a record. \`from\` maps a path parameter to
+  // wherever the response actually carries it, and that is sometimes inside
+  // a nested object.
+  function idread(data: any, path: string) {
+    let node: any = data
+    for (const key of path.split('.')) {
+      if (null == node) {
+        return undefined
+      }
+      node = node[key]
     }
+    return node
+  }
+
+
+  // The Seneca id, split back into the parameters the API addresses a record
+  // with. Refuses a wrong part count rather than sending a URL built from
+  // whatever the id happened to contain — that would address a different
+  // record, or none, and the 404 would name nothing useful.
+  function splitid(name: string, id: any, what: string) {
+    const spec = ID_SPEC[name]
+    const text = null == id ? '' : String(id)
+    const got = 1 === spec.parts.length ? [text] : text.split(spec.sep)
+
+    if (spec.parts.length !== got.length || got.some((p: string) => '' === p)) {
+      throw new Error(
+        '${provider.pkgName}: ' + name + ' ' + what +
+        ": id must be '" + spec.parts.join(spec.sep) + "', got: " + JSON.stringify(id))
+    }
+
+    const out: Record<string, any> = {}
+    spec.parts.forEach((p: string, i: number) => { out[p] = got[i] })
+    return out
+  }
+
+
+  // The id for a record the API returned.
+  //
+  // \`vals\` are the parameters THIS request addressed it with, and they win:
+  // a response does not always repeat them. Otherwise the parts are read out
+  // of the response through \`from\`, which is what makes a created or listed
+  // record identifiable at all.
+  //
+  // THE ADDRESSING KEY WINS over an \`id\` the response already carries. A
+  // response often has both — github's pull has a global database \`id\` and
+  // a repo-scoped \`number\` — and the unrelated one is no use for addressing
+  // anything. It is kept as \`${provider.lower}_id\` rather than dropped.
+  function joinid(name: string, data: any, vals?: any) {
+    const spec = ID_SPEC[name]
+    if (null == data) {
+      return data
+    }
+
+    let id = null
+
+    if (null != vals) {
+      const got = spec.parts.map((p: string) => vals[p])
+      if (got.every((v: any) => null != v && '' !== String(v))) {
+        id = got.join(spec.sep)
+      }
+    }
+
+    if (null == id) {
+      const got = spec.parts.map((p: string) =>
+        idread(data, (spec.from || {})[p] || p))
+      if (got.every((v: any) =>
+        null != v && 'object' !== typeof v && '' !== String(v))) {
+        id = got.join(spec.sep)
+      }
+    }
+
+    if (null != id) {
+      if (null != data.id && String(data.id) !== id &&
+        null == ${jsProp('data', provider.lower + '_id')}) {
+        ${jsProp('data', provider.lower + '_id')} = data.id
+      }
+      data.id = id
+    }
+
     return data
   }
 
 
 `)
-      })
+      }
 
       // WHICH SDK OP SERVES EACH `action$`, per entity and per cmd.
       //
@@ -1008,12 +1269,22 @@ function ${provider.pluginName}(this: any, options: ${provider.pluginName}Option
         // `save` guards the union of create's and update's keys: one action
         // serves both and dispatches at runtime, so it cannot know which set
         // applies until it has the data.
+        // A COMPOSITE-KEY ENTITY GUARDS NOTHING SEPARATELY. Its parent keys
+        // travel INSIDE the id, so demanding `q.owner` as well would reject
+        // `load$('octocat/hello-world')` — the very call the composite id
+        // exists to allow. splitid() does the checking instead, and refuses
+        // a wrong part count by name.
+        const eparts = idParts(e.ent)
+        // The whole id description for this entity, or null when none is
+        // needed. `out` branches on it rather than on the record key.
+        const espec = idSpec(e.ent)
         const guard = (cmd: string, src: string) => {
           const keys = 'save' === cmd ?
             [...new Set([...(e.opParents.create || []), ...(e.opParents.update || [])])].sort() :
             (e.opParents[cmd] || [])
 
           return keys
+            .filter((k: string) => !eparts.includes(k))
             .map((k: string) =>
               `      ${guardName(e, k)}(${jsProp(src, k)}, '${cmd}')\n`)
             .join('')
@@ -1022,19 +1293,53 @@ function ${provider.pluginName}(this: any, options: ${provider.pluginName}Option
         // Reading the record's own key off the Seneca query, which always
         // spells it `id`, and every other required key off its own name.
         const rk = recordKey(e.ent)
+
+        // For a composite key the parameters come out of the split, which the
+        // handler binds to `key` before the call. Any required key the id
+        // does NOT carry still comes off the query.
+        // THE RECORD'S OWN KEY IS ALWAYS SENT, whether or not the match
+        // declares it required.
+        //
+        // An op gathers several routes, and a parameter only one of them
+        // uses comes through OPTIONAL: github's IssueLoadMatch has `owner`
+        // and `repo` required but `id` optional, because the op also covers
+        // `/repos/{owner}/{repo}/issues/comments/{comment_id}`. Sending only
+        // the required keys called `Issue().load({owner, repo})` — the id
+        // the caller passed to `load$` went nowhere, so every read of any
+        // issue in that repo answered with the same record and
+        // `load$('no-such-issue')` returned one. Ten entities failed their
+        // not-found test on it, and the ones that "passed" were passing for
+        // the wrong reason. addressKeys is what the test emitter reads too.
         const sdkArg = (opname: string) => {
-          const keys = requiredKeys(e.ent, opname)
+          const keys = addressKeys(e.ent, opname)
           if (0 === keys.length) {
             return '{}'
+          }
+          if (0 < eparts.length) {
+            return `{ ${keys.map((k: string) => eparts.includes(k) ?
+              `${jsKey(k)}: ${jsProp('key', k)}` :
+              `${jsKey(k)}: ${jsProp('q', k)}`).join(', ')} }`
           }
           return `{ ${keys.map((k: string) =>
             `${jsKey(k)}: ${jsProp('q', k === rk ? 'id' : k)}`).join(', ')} }`
         }
 
+        // The line that splits the Seneca id into the API's parameters,
+        // emitted only where there is one record to address. `list` has none.
+        // The entity-options argument that carries the path parameters for a
+        // write. Empty for an ordinary entity, which needs no such channel.
+        const entArg = 0 === eparts.length ? '' :
+          `null == key ? undefined : { match: key }`
+
+        const splitLine = (cmd: string) => 0 === eparts.length ? '' :
+          `      const key = splitid('${e.name}', ${'save' === cmd ? 'data.id' : 'q.id'}, '${cmd}')\n`
+
         // The data hop, plus the id alias when the API keys the record by
-        // something other than `id`.
-        const out = (expr: string) =>
-          'id' === rk ? `plain(${expr})` : `id_${e.name}(plain(${expr}))`
+        // something other than `id`. A composite entity passes the addressing
+        // values through, because the response may not repeat them.
+        const out = (expr: string, vals?: string) =>
+          null == espec ? `plain(${expr})` :
+            `joinid('${e.name}', plain(${expr})${null == vals ? '' : ', ' + vals})`
 
         // The action branch, emitted for every cmd whether or not this entity
         // has actions. `actionop` is what refuses an unknown name, so leaving
@@ -1084,8 +1389,8 @@ ${actionBranch('list',
 ${actionBranch('load',
             `        const hit = await ornull(() => this.shared.sdk.${e.acc}()[op$](actionq(msg.q, '${rk}', action$)))
         return null == hit ? null : entize(${out('hit')})
-`)}${guard('load', 'q')}      const res = await ornull(() => this.shared.sdk.${e.acc}().load(${sdkArg('load')}))
-      return null == res ? null : entize(${out('res')})
+`)}${guard('load', 'q')}${splitLine('load')}      const res = await ornull(() => this.shared.sdk.${e.acc}().load(${sdkArg('load')}))
+      return null == res ? null : entize(${out('res', 0 < eparts.length ? 'key' : undefined)})
     }
 
 `)
@@ -1101,20 +1406,80 @@ ${actionBranch('load',
           // update unreachable.
           const body = hasCreate && hasUpdate
             ? `      const res = null == data.id
-        ? await sdk.${e.acc}().create(data)
-        : await sdk.${e.acc}().update(data)`
+        ? await sdk.${e.acc}(${entArg}).create(data)
+        : await sdk.${e.acc}(${entArg}).update(data)`
             : hasCreate
-              ? `      const res = await sdk.${e.acc}().create(data)`
-              : `      const res = await sdk.${e.acc}().update(data)`
+              ? `      const res = await sdk.${e.acc}(${entArg}).create(data)`
+              : `      const res = await sdk.${e.acc}(${entArg}).update(data)`
 
           // ... and hand the API back its own key, which Seneca does not know
           // to send.
-          const alias = 'id' === rk ? '' :
+          //
+          // A COMPOSITE KEY IS UNPACKED ONTO THE DATA. The write goes out as
+          // a body plus path parameters, and the SDK reads those parameters
+          // off the same object — so the parts have to be present under
+          // their own names, not fused into `id`. On a create there is no id
+          // yet and the caller supplies the parts directly, which is why this
+          // only runs when an id is there.
+          // THE COMPOSITE SPLIT CANNOT LIVE HERE, before the action branch,
+          // even though that is where the single-key alias sits. The alias
+          // only ever assigns; the split THROWS on an id that is not all its
+          // parts, and an `action$` call is entitled to an id shaped however
+          // that action's own route wants. Running it first turned
+          // `action$: 'no_such_action'` into an id complaint, hiding the
+          // error the caller needed. It is emitted after the action branch
+          // instead — see compositeSave below, spliced where the parent
+          // guards go, which is exactly the position the component already
+          // documents as "after the action branch".
+          const compositeSave = 0 < eparts.length ? `
+      // Seneca carries this ${e.name}'s key as one \`id\`; the API addresses
+      // the record by ${eparts.map((p: string) => '`' + p + '`').join(' and ')}.
+      //
+      // THE PARTS GO IN THE ENTITY MATCH, NOT ONTO THE DATA. They are path
+      // parameters, and the data is the request body. Writing them onto the
+      // data is how the flat \`${eparts[0]}\` the URL needs came to displace
+      // whatever the response carries under that name — for github's repo an
+      // \`owner\` OBJECT, so a saved record lost the field that identifies
+      // it. The SDK resolves a path parameter from the match ahead of the
+      // body, so passing it here leaves the body exactly as the caller meant
+      // it.
+      //
+      // \`key\` STAYS NULL ON A CREATE: there is no id yet, the API assigns
+      // the record, and the id is rebuilt from the response instead.
+      let key = null
+      if (null != data.id) {
+        key = splitid('${e.name}', data.id, 'save')
+      }
+
+      // \`${provider.lower}_id\` is this provider's own bookkeeping — the
+      // API's unrelated \`id\`, parked by joinid() so it is not lost. It is
+      // not a field of the API's write schema, so it must not travel in the
+      // request body.
+      delete ${jsProp('data', provider.lower + '_id')}
+
+      // AND NEITHER DOES THE JOINED \`id\`. It is Seneca's key for this
+      // record, not the API's: a composite ${e.name} is addressed by
+      // \`${eparts.join('\` and \`')}\`, which travel as path parameters in
+      // the match above. Leaving it on the body sent \`owner0/repo0\` as a
+      // field the write schema has no place for — and the offline transport,
+      // which matches a request against a stored record, then looked for a
+      // record whose own \`id\` was that joined string and found none.
+      delete data.id
+` : ''
+
+          const alias = 0 < eparts.length ? '' : 'id' === rk ? '' :
             `
       // This API keys a ${e.name} by \`${rk}\`; Seneca carries it as \`id\`.
       if (null == ${jsProp('data', rk)} && null != data.id) {
         ${jsProp('data', rk)} = data.id
       }
+
+      // \`${provider.lower}_id\` is this provider's own bookkeeping — the
+      // API's unrelated \`id\`, parked by joinid() so it is not lost. It
+      // is not a field of the API's write schema, so it must not travel in
+      // the request body: a strict API rejects an unknown property, and a
+      // lax one may persist it.
+      delete ${jsProp('data', provider.lower + '_id')}
 `
 
           Content(`
@@ -1130,9 +1495,9 @@ ${actionBranch('save',
         data.$action = action$
         const done = await sdk.${e.acc}()[op$](data)
         return entize(${out('done')})
-`)}${guard('save', 'data')}${body}
+`)}${guard('save', 'data')}${compositeSave}${body}
 
-      return entize(${out('res')})
+      return entize(${out('res', 0 < eparts.length ? 'key' : undefined)})
     }
 
 `)
@@ -1160,7 +1525,7 @@ ${actionBranch('save',
 ${actionBranch('remove',
             `        const gone = await ornull(() => this.shared.sdk.${e.acc}()[op$](actionq(msg.q, '${rk}', action$)))
         return null == gone ? null : entize(${out('gone')})
-`)}${guard('remove', 'q')}      await ornull(() => this.shared.sdk.${e.acc}().remove(${sdkArg('remove')}))
+`)}${guard('remove', 'q')}${splitLine('remove')}      await ornull(() => this.shared.sdk.${e.acc}().remove(${sdkArg('remove')}))
       return null
     }
 
@@ -1181,9 +1546,20 @@ ${actionBranch('remove',
     const sdkopts: any = Object.assign({}, options.sdk)
 ${provider.authActive ? `
     // The provider convention carries credentials, so honour an \`apikey\`
-    // when one is configured and stay quiet when it is not.
+    // when one is configured.
     const res = await this.post('sys:provider,get:keymap,provider:${provider.lower}')
-    const apikey = res?.keymap?.apikey?.value
+
+    // ACCEPT \`api\` AS WELL AS \`apikey\`. The older provider convention
+    // named this key \`api\` and read it with
+    // \`sys:provider,get:key,...,key:api\`; the keymap message replaced that,
+    // and the rename was silent. An application still configured as
+    // \`keys: { api: { value: ... } }\` therefore resolved to undefined and
+    // the SDK was constructed with NO credential at all — the request went
+    // out unauthenticated and failed much later as a 401 or a 404 on
+    // anything private, with nothing at startup to point at the cause.
+    // \`apikey\` wins when both are set, so a config that has migrated is
+    // unaffected.
+    const apikey = res?.keymap?.apikey?.value ?? res?.keymap?.api?.value
 
     // Hand the credential to the SDK as \`apikey\`, NOT as an authorization
     // HEADER. The SDK's own auth stage owns that header: it reads
@@ -1195,6 +1571,23 @@ ${provider.authActive ? `
     // rather than assumed to be \`Bearer\`.
     if (null != apikey && '' !== apikey) {
       sdkopts.apikey = apikey
+    }
+
+    // AN UNRESOLVED CREDENTIAL IS SAID OUT LOUD. This API declares
+    // authentication, so reaching here with nothing configured means every
+    // call goes out unauthenticated. That is not always wrong — public
+    // read-only endpoints work, at a much lower rate limit — so this warns
+    // rather than throwing, and names both accepted key spellings so a
+    // misnamed key is obvious from one line of log. Silence here is what
+    // made the \`api\` -> \`apikey\` rename above cost a debugging session
+    // instead of a glance.
+    else {
+      this.log.warn({
+        fix: 'unauthenticated',
+        note: 'no ${provider.lower} credential resolved from the keymap ' +
+          '(looked for keys.apikey then keys.api); requests will be sent ' +
+          'unauthenticated and will fail on anything non-public',
+      })
     }
 ${provider.authBasic ? `
     // Genuine HTTP Basic Auth needs a SECOND credential (the SDK sends
