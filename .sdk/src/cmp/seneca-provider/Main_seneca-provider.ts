@@ -538,16 +538,36 @@ const Main = cmp(function Main(props: any) {
         // rejects.
         idparts: idParts(ent),
         idsep: idSep(ent),
-        // DOES A LOAD ACTUALLY CARRY THE RECORD'S OWN KEY? Only then can a
-        // wrong id miss. github's `interaction` reads
-        // `/user/interaction-limits` — a singleton, called as `load({})` —
-        // so `load$('no-such-id')` correctly returns the one record there
-        // is, and a not-found test against it asserts the opposite of the
-        // truth. Parent keys alone do not distinguish records either, which
-        // is why this asks for the record's key or the composite parts
-        // rather than merely for "the route has a parameter".
-        idaddressed: 0 < idParts(ent).length ||
-          addressKeys(ent, 'load').includes(recordKey(ent)),
+        // DOES EACH SINGLE-RECORD OP ACTUALLY CARRY THE RECORD'S KEY?
+        //
+        // Only then can a wrong id miss on a LOAD: github's `interaction`
+        // reads `/user/interaction-limits` — a singleton, called as
+        // `load({})` — so `load$('no-such-id')` correctly returns the one
+        // record there is, and a not-found test against it asserts the
+        // opposite of the truth.
+        //
+        // And only then can a REMOVE delete what a create just made. A
+        // tag-bucket entity can have ops addressing different resources
+        // entirely: github's `action` is keyed `archive_format` from its
+        // download route while its remove takes `hosted_runner_id` and
+        // `org_id`, so the remove addressed by parent scope alone — it
+        // deleted whichever record the store happened to yield first, which
+        // was usually a SEEDED one, and the round-trip failed on the record
+        // it had created surviving. Intermittently: the created record's id
+        // is random, so where it falls in iteration order decides.
+        //
+        // Parent keys alone do not distinguish records, which is why this
+        // asks for the record's key or every composite part rather than
+        // merely for "the route has a parameter".
+        idaddressed: ['load', 'remove', 'update'].reduce(
+          (acc: Record<string, boolean>, opname: string) => {
+            const keys = addressKeys(ent, opname)
+            const parts = idParts(ent)
+            acc[opname] = 0 < parts.length ?
+              parts.every((p: string) => keys.includes(p)) :
+              keys.includes(recordKey(ent))
+            return acc
+          }, {}),
         // Where each part is carried in a response. The test emitter needs
         // it to know whether a created record's id can be rebuilt at all.
         idfrom: (ent?.id?.from) || {},

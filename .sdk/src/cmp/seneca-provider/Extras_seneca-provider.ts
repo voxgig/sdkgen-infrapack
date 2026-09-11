@@ -28,7 +28,21 @@ function loadHasKey(e: any): boolean {
   // `load({})`, so every id hits the same record and a not-found test
   // against them asserts the opposite of the truth. Asking the route
   // whether it has any parameter said yes for both.
-  return true === e.idaddressed
+  return true === (e.idaddressed || {}).load
+}
+
+
+// CAN A REMOVE DELETE WHAT A CREATE JUST MADE? A round-trip that ends by
+// asserting the record is gone needs one that can address it.
+//
+// github's `action` is a tag bucket whose ops address different resources:
+// keyed `archive_format` from its download route, removed by
+// `hosted_runner_id` and `org_id`. The remove therefore deleted whichever
+// record the store yielded first — usually a SEEDED one — and the round-trip
+// failed on its own record surviving, intermittently, because the created
+// id is random and its position in iteration order decides.
+function removeAddresses(e: any): boolean {
+  return true === (e.idaddressed || {}).remove
 }
 
 
@@ -948,13 +962,31 @@ ${!loadHasKey(e) ? '' : `
       // transport implements create/update/remove, so this needs no server.
       each(provider.entities, (e: any) => {
         if (e.cmds.includes('save') && e.cmds.includes('remove')) {
-          if (compositeRoundTrip(e)) {
+          if (compositeRoundTrip(e) && removeAddresses(e)) {
             Content(`
 ` + crudTest(provider, e, 'offline'))
           }
-          else {
+          else if (!removeAddresses(e)) {
             // Said in the file rather than silently omitted: a missing test
             // that nobody can see is how a gap becomes permanent.
+            Content(`
+  // NO ${e.name} create/update/remove round-trip: THE REMOVE CANNOT ADDRESS
+  // ONE RECORD.
+  //
+  // The key is \`${0 < idPartsOf(e).length ?
+              idPartsOf(e).join(String(e.idsep || '/')) : e.rk}\`, and the remove route does not take it. It
+  // addresses ${0 === e.parents.length ? 'nothing more specific' :
+                '\`' + e.parents.join('\`, \`') + '\` and no further'}, so a
+  // remove deletes whichever record the API answers with rather than the one
+  // this test created — offline, usually a SEEDED record, leaving the
+  // round-trip to fail on its own record surviving.
+  //
+  // This befalls an entity whose ops address DIFFERENT resources, which a
+  // tag-derived entity can. Reads and lists are unaffected.
+
+`)
+          }
+          else {
             Content(`
   // NO ${e.name} create/update/remove round-trip. This API addresses a
   // ${e.name} by \`${idPartsOf(e).join(String(e.idsep || '/'))}\`, and at least
