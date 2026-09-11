@@ -791,29 +791,37 @@ describe('seneca-provider target, from its package', () => {
       ok(got.spec.startsWith('github:'),
         'not a github dependency: ' + got.spec)
 
-      // THE SUBDIRECTORY IS PART OF THE DEFAULT, because npm resolves a git
-      // dependency against the repository ROOT and sdkgen generates the SDK
-      // into `ts/`. Without it the shorthand installs a directory with no
-      // package.json in it — a trap, not a convenience.
-      ok(got.spec.endsWith('#v9.9.9::path:ts'),
-        'the ref and subdirectory did not reach the dependency: ' + got.spec)
+      ok(got.spec.endsWith('#v9.9.9'),
+        'the ref did not reach the dependency: ' + got.spec)
+
+      // NO `::path:` SUBDIRECTORY, EVER. npm's spec parser accepts it and
+      // reports a gitSubdir, so it reads as supported — and the INSTALLER
+      // ignores it, cloning the repo and opening package.json at the root.
+      // That was measured on linux, macOS and Windows: ENOENT on all three.
+      // An SDK in a subdirectory uses `kind: 'release'` instead.
+      ok(!got.spec.includes('::path:'),
+        'the dependency carries a subdirectory npm will ignore: ' + got.spec)
     })
 
 
-    // `.` means the package IS the repository root.
-    test('a dot path drops the subdirectory', async (t) => {
+    // THE FORM THAT WORKS FOR THIS TOOLCHAIN'S OWN LAYOUT. sdkgen generates
+    // the SDK into `ts/`, which no git dependency can reach; a release asset
+    // is `npm pack` output attached to the tag, and npm installs an https
+    // tarball without looking at the repository layout at all.
+    test('a release kind points at the tag\'s asset', async (t) => {
       const got = await manifestDep(t,
         "main: kit: target: 'seneca-provider': sdk: dep: {\n"
-        + "  kind: 'git'\n"
+        + "  kind: 'release'\n"
         + "  ref: 'v9.9.9'\n"
-        + "  path: '.'\n"
         + "}")
       if (null == got) return
 
-      ok(got.spec.endsWith('#v9.9.9'),
-        'a root package still carries a path: ' + got.spec)
-      ok(!got.spec.includes('::path:'),
-        'a root package still carries a path: ' + got.spec)
+      ok(got.spec.startsWith('https://github.com/'),
+        'not an https tarball: ' + got.spec)
+      ok(got.spec.includes('/releases/download/v9.9.9/'),
+        'the ref did not reach the asset path: ' + got.spec)
+      ok(got.spec.endsWith('.tgz'),
+        'not a tarball: ' + got.spec)
     })
 
 

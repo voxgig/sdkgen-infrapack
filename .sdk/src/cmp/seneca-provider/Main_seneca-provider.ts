@@ -708,14 +708,21 @@ const Main = cmp(function Main(props: any) {
   // into every generated provider's CI.
   const liveApp = true === live.app || (loopback(specBase) && '' === (live.base || ''))
 
+  const sdkDep = sdkDependency(model, target, {
+    sdkPkg, sdkVersion, sdkRepoUrl: repoInfo(model).repoUrl,
+  })
+
   const provider = {
     Name, lower, ENV, sdkClass, pluginName, fileBase,
     sdkPkg, sdkVersion, entities,
-    // Whether the SDK dependency is a git tag rather than a registry
-    // package. The generated CI note says which, because "npm install is all
-    // you need" stops being true the moment git is in the path.
-    sdkGit: sdkDependency(model, target, { sdkVersion, sdkRepoUrl: repoInfo(model).repoUrl })
-      .startsWith('github:'),
+    // The SDK dependency, resolved ONCE. PackageJson emits it and the CI
+    // note describes it, and computing it twice is how the second caller
+    // came to pass a half-built provider object into it.
+    sdkDep,
+    // Whether that dependency comes from outside a registry. The generated
+    // CI note says so, because "npm install is all you need" stops being
+    // true the moment git or a tarball URL is in the path.
+    sdkGit: !sdkDep.startsWith('^'),
     repoUrl: repo.url,
     // The SDK's own repo, for pointing at the companion test server which is
     // only distributed in source.
@@ -790,13 +797,21 @@ const Main = cmp(function Main(props: any) {
 // `kind: 'git'` points at a GIT TAG instead, which needs no registry.
 //
 // NPM RESOLVES A GIT DEPENDENCY AGAINST THE REPOSITORY ROOT, and sdkgen
-// generates the TypeScript SDK into `ts/` — so the bare
-// `github:owner/repo#ref` every example shows would install a directory with
-// no package.json in it. npm spells the subdirectory `#<ref>::path:<sub>`
-// (npm-package-arg resolves that to gitSubdir), and `path` therefore
-// defaults to `ts` rather than to nothing: the default has to match the
-// layout this toolchain actually produces, or the shorthand is a trap. `.`
-// means the package IS the repository root.
+// generates the TypeScript SDK into `ts/`. So `kind: 'git'` suits an SDK
+// whose package.json IS the repository root, and NOT the layout this
+// toolchain produces.
+//
+// THE `::path:` SUBDIRECTORY SYNTAX DOES NOT WORK, and it looks like it
+// does. npm-package-arg parses `#<ref>::path:ts` and reports
+// `gitSubdir: /ts`, so a spec built that way reads as correct — but the
+// INSTALLER ignores it: npm clones the repository and opens package.json at
+// the clone root, failing with ENOENT on linux, macOS and Windows alike.
+// That was measured, on all three, after the parser had said otherwise.
+//
+// `kind: 'release'` is the form that works for a package in a subdirectory:
+// a GitHub release asset, which is `npm pack` output attached to the tag.
+// npm installs an https tarball natively and never looks at the repository
+// layout at all.
 //
 // `spec` still wins over all of it, for anything the shorthand cannot say.
 function sdkDependency(model: any, target: any, provider: any): string {
@@ -807,7 +822,8 @@ function sdkDependency(model: any, target: any, provider: any): string {
     return spec
   }
 
-  if ('git' !== String(dep.kind || 'npm')) {
+  const kind = String(dep.kind || 'npm')
+  if ('git' !== kind && 'release' !== kind) {
     return `^${provider.sdkVersion}`
   }
 
@@ -837,11 +853,17 @@ function sdkDependency(model: any, target: any, provider: any): string {
       'on, e.g. `sdk.dep.ref: "v' + provider.sdkVersion + '"`.')
   }
 
-  // `.` (and empty) mean the repository root, which needs no path segment.
-  const sub = String(dep.path ?? 'ts').trim().replace(/^\/+|\/+$/g, '')
+  if ('release' === kind) {
+    // The asset `npm pack` produces: scope and name flattened, then the
+    // version. `asset` overrides it for a project that names its own.
+    const asset = String(dep.asset || '').trim() || (
+      provider.sdkPkg.replace(/^@/, '').replace(/\//g, '-') +
+      '-' + provider.sdkVersion + '.tgz')
 
-  return `github:${repo}#${ref}` +
-    ('' === sub || '.' === sub ? '' : `::path:${sub}`)
+    return `https://github.com/${repo}/releases/download/${ref}/${asset}`
+  }
+
+  return `github:${repo}#${ref}`
 }
 
 
@@ -948,7 +970,7 @@ const PackageJson = cmp(function PackageJson(props: any) {
       // The SDK this plugin wraps. Published-and-pinned by default; a git
       // tag when the project says so, because an unpublished SDK otherwise
       // leaves this package unable to install at all. See sdkDependency.
-      [provider.sdkPkg]: sdkDependency(model, target, provider),
+      [provider.sdkPkg]: provider.sdkDep,
       ...dep('prod'),
     },
     peerDependencies: dep('peer'),

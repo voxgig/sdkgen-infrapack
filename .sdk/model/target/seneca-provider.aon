@@ -65,20 +65,32 @@ main: kit: target: 'seneca-provider': {
   # `repo` defaults to the SDK's own repository, so normally only the ref is
   # stated.
   #
-  # `path` is the SUBDIRECTORY the SDK package sits in, because npm resolves
-  # a git dependency against the repository root and sdkgen generates the
-  # TypeScript SDK into `ts/`. It therefore defaults to `ts` — the layout
-  # this toolchain produces — and npm spells it `#<ref>::path:<path>`. Set it
-  # to `.` for an SDK whose package.json IS the repository root.
+  # WHICH KIND TO USE DEPENDS ON WHERE THE PACKAGE SITS. npm resolves a git
+  # dependency against the repository ROOT, and sdkgen generates the
+  # TypeScript SDK into `ts/` — so `git` suits an SDK that IS its repository
+  # root, and `release` suits this toolchain's own layout:
+  #
+  #   kind: 'git'      github:owner/repo#<ref>
+  #   kind: 'release'  https://github.com/owner/repo/releases/download/
+  #                      <ref>/<asset>.tgz
+  #
+  # A release asset is `npm pack` output attached to the tag; npm installs an
+  # https tarball natively and never looks at the repository layout. `asset`
+  # names the file when it is not the usual `<scope>-<name>-<version>.tgz`.
+  #
+  # There is no subdirectory option, deliberately. npm's spec parser accepts
+  # `#<ref>::path:ts` and reports a gitSubdir, so it reads as supported — but
+  # the INSTALLER ignores it and fails with ENOENT, on linux, macOS and
+  # Windows alike. A knob that produces an uninstallable dependency is worse
+  # than no knob.
   #
   # `spec` states the whole dependency value outright and wins over
-  # everything, for anything the shorthand cannot express — a release-tarball
-  # URL, say.
+  # everything.
   sdk: dep: {
-    kind: *'npm' | 'git'
+    kind: *'npm' | 'git' | 'release'
     ref: *'' | string
     repo: *'' | string
-    path: *'ts' | string
+    asset: *'' | string
     spec: *'' | string
   }
 
