@@ -3,9 +3,9 @@
     "package": 1
   },
   "name": "@voxgig/sdkgen-infrapack",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "engines": {
-    "sdkgen": ">=4.9.0"
+    "sdkgen": ">=4.12.0"
   },
   "provides": {
     "target": [

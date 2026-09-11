@@ -1,6 +1,6 @@
 {
   "name": "@voxgig/sdkgen-infrapack",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Infrastructure-provider targets for the Voxgig SDK Generator: Seneca provider.",
   "type": "commonjs",
   "license": "MIT",
@@ -84,12 +84,12 @@
     "hoist is gone and the type-check lane fails."
   ],
   "peerDependencies": {
-    "@voxgig/apidef": ">=8.2.2",
-    "@voxgig/sdkgen": ">=4.9.0"
+    "@voxgig/apidef": ">=8.4.0",
+    "@voxgig/sdkgen": ">=4.12.0"
   },
   "devDependencies": {
-    "@voxgig/apidef": ">=8.2.2",
-    "@voxgig/sdkgen": ">=4.9.0",
+    "@voxgig/apidef": ">=8.4.0",
+    "@voxgig/sdkgen": ">=4.12.0",
     "aontu": ">=0.52",
     "memfs": "4.68.1",
     "typescript": "7.0.2",
