@@ -559,6 +559,30 @@ const Main = cmp(function Main(props: any) {
         // Parent keys alone do not distinguish records, which is why this
         // asks for the record's key or every composite part rather than
         // merely for "the route has a parameter".
+        // WHICH SINGLE-RECORD OPS ADDRESS A DIFFERENT RESOURCE ENTIRELY.
+        //
+        // Not merely "cannot address the record": an op that addresses
+        // NOTHING is a singleton read, and github's `interaction`
+        // (`/user/interaction-limits`) is a real one. This is the other case
+        // — the op addresses something, and it is not this record. Every one
+        // is a tag-derived entity whose ops were gathered from unrelated
+        // routes: `migration`'s remove takes `owner` and `repo` and deletes
+        // a repository's migration archive, `user`'s deletes a GPG KEY, and
+        // `pull`'s deletes a review COMMENT. The id the caller passed is
+        // dropped, and the request goes anyway.
+        //
+        // Reads are untouched across the whole of github — this is 7 removes
+        // and 5 updates, and both are writes.
+        idmisaddressed: ['remove', 'update'].reduce(
+          (acc: Record<string, boolean>, opname: string) => {
+            acc[opname] = null != (ent.op || {})[opname] &&
+              0 < addressKeys(ent, opname).length &&
+              !(0 < idParts(ent).length ?
+                idParts(ent).every((p: string) =>
+                  addressKeys(ent, opname).includes(p)) :
+                addressKeys(ent, opname).includes(recordKey(ent)))
+            return acc
+          }, {}),
         idaddressed: ['load', 'remove', 'update'].reduce(
           (acc: Record<string, boolean>, opname: string) => {
             const keys = addressKeys(ent, opname)
@@ -1219,6 +1243,37 @@ ${rows}
   // That is the silent drop in another hat: the caller named something the
   // entity does not have and was not told. An empty map inherits them all,
   // so a cmd with no actions was the most exposed.
+  // THE CMD THAT WOULD WRITE TO THE WRONG RESOURCE.
+  //
+  // Some entities gather their ops from unrelated routes, and then a cmd's
+  // only route addresses something that is not this record: \`migration\`'s
+  // remove deletes a repository's migration ARCHIVE, \`user\`'s deletes a GPG
+  // KEY, \`pull\`'s deletes a review COMMENT. The id the caller passed is not
+  // in the request at all.
+  //
+  // Such a cmd is refused rather than sent. A caller asking to remove one
+  // record must not have a different resource deleted instead, and a
+  // successful-looking reply is the worst possible answer. Where the real
+  // operation exists it is reachable by name, through \`action$\`.
+  function misaddressed(
+    entname: string, cmd: string, key: string, addresses: string[]
+  ) {
+    const own = Object.prototype.hasOwnProperty
+    const ents: any = own.call(ACTIONS, entname) ? ACTIONS[entname] : {}
+    const acts = Object.keys(own.call(ents, cmd) ? ents[cmd] : {}).sort()
+
+    throw new Error(
+      '${provider.pkgName}: ' + entname + ' ' + cmd +
+      ': this API has no ' + cmd + ' route for one ' + entname +
+      '. Its only ' + cmd + ' route addresses ' + addresses.join(', ') +
+      ', not ' + key + ', so the id would be ignored and a different record ' +
+      'changed. ' +
+      (0 < acts.length ?
+        'Name the operation with action\$ instead: ' + acts.join(', ') :
+        'No action\$ of this cmd is available either'))
+  }
+
+
   function actionop(name: string, entname: string, cmd: string) {
     const own = Object.prototype.hasOwnProperty
     const ents: any = own.call(ACTIONS, entname) ? ACTIONS[entname] : {}
@@ -1288,6 +1343,25 @@ ${rows}
             .map((k: string) =>
               `      ${guardName(e, k)}(${jsProp(src, k)}, '${cmd}')\n`)
             .join('')
+        }
+
+        // THE REFUSAL LINE, for a cmd whose only route addresses a
+        // different resource. Placed AFTER the action branch — an action
+        // route is named explicitly and is exactly how the real operation is
+        // reached — and BEFORE the guards, so the caller is told the cmd
+        // does not exist for this entity rather than being asked for a
+        // parameter that would not have helped.
+        const refuse = (cmd: string) => {
+          if (true !== (e.idmisaddressed || {})[cmd]) {
+            return ''
+          }
+          const key = 0 < eparts.length ? eparts.join(String(e.idsep || '/')) :
+            recordKey(e.ent)
+          const addresses = addressKeys(e.ent, cmd)
+
+          return `      misaddressed('${e.name}', '${cmd}', '${key}', ` +
+            `[${addresses.map((k: string) => `'${k}'`).join(', ')}])
+`
         }
 
         // Reading the record's own key off the Seneca query, which always
@@ -1404,13 +1478,25 @@ ${actionBranch('load',
           // entity's data, so its id lives at `id` whatever the API calls it —
           // dispatching on the API's key sent every save to `create`, leaving
           // update unreachable.
+          // A MISADDRESSED UPDATE IS REFUSED, BUT ONLY ON THE UPDATE LEG. A
+          // create needs no record key — the API assigns one — so an entity
+          // whose update route addresses a different resource can still be
+          // created. Dispatch is on `data.id`, so the refusal goes exactly
+          // where the update would have.
+          const refuseUpdate = true === (e.idmisaddressed || {}).update ?
+            refuse('update') : ''
+
           const body = hasCreate && hasUpdate
-            ? `      const res = null == data.id
+            ? (('' === refuseUpdate) ? `      const res = null == data.id
         ? await sdk.${e.acc}(${entArg}).create(data)
-        : await sdk.${e.acc}(${entArg}).update(data)`
+        : await sdk.${e.acc}(${entArg}).update(data)` : `      if (null != data.id) {
+  ${refuseUpdate.replace(/\n$/, '')}
+      }
+
+      const res = await sdk.${e.acc}(${entArg}).create(data)`)
             : hasCreate
               ? `      const res = await sdk.${e.acc}(${entArg}).create(data)`
-              : `      const res = await sdk.${e.acc}(${entArg}).update(data)`
+              : `${refuseUpdate}      const res = await sdk.${e.acc}(${entArg}).update(data)`
 
           // ... and hand the API back its own key, which Seneca does not know
           // to send.
@@ -1525,8 +1611,9 @@ ${actionBranch('save',
 ${actionBranch('remove',
             `        const gone = await ornull(() => this.shared.sdk.${e.acc}()[op$](actionq(msg.q, '${rk}', action$)))
         return null == gone ? null : entize(${out('gone')})
-`)}${guard('remove', 'q')}${splitLine('remove')}      await ornull(() => this.shared.sdk.${e.acc}().remove(${sdkArg('remove')}))
-      return null
+`)}${'' !== refuse('remove') ? refuse('remove') :
+            `${guard('remove', 'q')}${splitLine('remove')}      await ornull(() => this.shared.sdk.${e.acc}().remove(${sdkArg('remove')}))
+`}      return null
     }
 
 `)
