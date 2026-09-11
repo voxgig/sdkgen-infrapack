@@ -42,6 +42,46 @@ main: kit: target: 'seneca-provider': {
     test:       { active: false }
   }
 
+  # HOW THIS PROVIDER DEPENDS ON THE SDK IT WRAPS.
+  #
+  # Default: the PUBLISHED package, pinned to the version the `ts` target
+  # publishes, so the two can never disagree. That is right whenever the SDK
+  # is on a registry.
+  #
+  # It is not always on one. An SDK generated for a private API, or one not
+  # published yet, leaves the provider with a dependency that cannot resolve
+  # — `npm install` fails with a 404 and the provider cannot be built, tested
+  # or released at all. `kind: 'git'` points the dependency at a GIT TAG
+  # instead, which needs no registry.
+  #
+  # A PROJECT DECISION, not an API fact, so it belongs in the project overlay
+  # (`model/project.aon`) — `target add` overwrites THIS file:
+  #
+  #   main: kit: target: 'seneca-provider': sdk: dep: {
+  #     kind: 'git'
+  #     ref: 'v0.1.0'
+  #   }
+  #
+  # `repo` defaults to the SDK's own repository, so normally only the ref is
+  # stated.
+  #
+  # `path` is the SUBDIRECTORY the SDK package sits in, because npm resolves
+  # a git dependency against the repository root and sdkgen generates the
+  # TypeScript SDK into `ts/`. It therefore defaults to `ts` — the layout
+  # this toolchain produces — and npm spells it `#<ref>::path:<path>`. Set it
+  # to `.` for an SDK whose package.json IS the repository root.
+  #
+  # `spec` states the whole dependency value outright and wins over
+  # everything, for anything the shorthand cannot express — a release-tarball
+  # URL, say.
+  sdk: dep: {
+    kind: *'npm' | 'git'
+    ref: *'' | string
+    repo: *'' | string
+    path: *'ts' | string
+    spec: *'' | string
+  }
+
   # `kind` is a COMMA-SEPARATED LIST of manifest sections, not a single one.
   # collectDeps deduplicates by package name and this map is keyed by name, so
   # a package belonging in two sections cannot be declared twice — it says so

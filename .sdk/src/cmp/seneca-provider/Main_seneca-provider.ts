@@ -711,6 +711,11 @@ const Main = cmp(function Main(props: any) {
   const provider = {
     Name, lower, ENV, sdkClass, pluginName, fileBase,
     sdkPkg, sdkVersion, entities,
+    // Whether the SDK dependency is a git tag rather than a registry
+    // package. The generated CI note says which, because "npm install is all
+    // you need" stops being true the moment git is in the path.
+    sdkGit: sdkDependency(model, target, { sdkVersion, sdkRepoUrl: repoInfo(model).repoUrl })
+      .startsWith('github:'),
     repoUrl: repo.url,
     // The SDK's own repo, for pointing at the companion test server which is
     // only distributed in source.
@@ -770,6 +775,74 @@ const Main = cmp(function Main(props: any) {
   Readme({ provider })
   Docs({ provider })
 })
+
+
+// HOW THE PROVIDER DEPENDS ON THE SDK IT WRAPS, as one dependency value.
+//
+// Default: the PUBLISHED package pinned to the version the `ts` target
+// publishes, so the two can never disagree. Right whenever the SDK is on a
+// registry — and wrong when it is not. An SDK for a private API, or one not
+// published yet, leaves the provider unable to `npm install` at all: the
+// dependency 404s, so the package cannot be built, tested or released. That
+// is not hypothetical; it is why @seneca/github-provider could not be
+// regenerated and released for weeks.
+//
+// `kind: 'git'` points at a GIT TAG instead, which needs no registry.
+//
+// NPM RESOLVES A GIT DEPENDENCY AGAINST THE REPOSITORY ROOT, and sdkgen
+// generates the TypeScript SDK into `ts/` — so the bare
+// `github:owner/repo#ref` every example shows would install a directory with
+// no package.json in it. npm spells the subdirectory `#<ref>::path:<sub>`
+// (npm-package-arg resolves that to gitSubdir), and `path` therefore
+// defaults to `ts` rather than to nothing: the default has to match the
+// layout this toolchain actually produces, or the shorthand is a trap. `.`
+// means the package IS the repository root.
+//
+// `spec` still wins over all of it, for anything the shorthand cannot say.
+function sdkDependency(model: any, target: any, provider: any): string {
+  const dep = model?.main?.[KIT]?.target?.[target.name]?.sdk?.dep || {}
+
+  const spec = String(dep.spec || '').trim()
+  if ('' !== spec) {
+    return spec
+  }
+
+  if ('git' !== String(dep.kind || 'npm')) {
+    return `^${provider.sdkVersion}`
+  }
+
+  // `owner/repo`, from the SDK's own repository unless the project says
+  // otherwise. Accepts a full URL and reduces it, so a project can paste
+  // what its remote prints.
+  const repo = String(dep.repo || provider.sdkRepoUrl || '')
+    .replace(/^git\+/, '')
+    .replace(/^(https?:\/\/)?(www\.)?github\.com[/:]/, '')
+    .replace(/\.git$/, '')
+    .replace(/\/+$/, '')
+
+  if ('' === repo) {
+    throw new SdkGenError(
+      'seneca-provider: sdk.dep.kind is "git" but no repository is known. ' +
+      'Set `main.' + KIT + '.target.' + target.name +
+      '.sdk.dep.repo` to `owner/repo`, or state the whole dependency with ' +
+      '`sdk.dep.spec`.')
+  }
+
+  const ref = String(dep.ref || '').trim()
+  if ('' === ref) {
+    throw new SdkGenError(
+      'seneca-provider: sdk.dep.kind is "git" but no `ref` is set. A git ' +
+      'dependency with no ref follows the default branch, so an install ' +
+      'today and an install tomorrow can differ — name the TAG to depend ' +
+      'on, e.g. `sdk.dep.ref: "v' + provider.sdkVersion + '"`.')
+  }
+
+  // `.` (and empty) mean the repository root, which needs no path segment.
+  const sub = String(dep.path ?? 'ts').trim().replace(/^\/+|\/+$/g, '')
+
+  return `github:${repo}#${ref}` +
+    ('' === sub || '.' === sub ? '' : `::path:${sub}`)
+}
 
 
 // --- package.json -----------------------------------------------------------
@@ -872,8 +945,10 @@ const PackageJson = cmp(function PackageJson(props: any) {
     files: ['dist', 'doc', 'src/**/*.ts', 'LICENSE'],
     engines: { node: '>=24' },
     dependencies: {
-      // The SDK this plugin wraps, by its PUBLISHED name and version.
-      [provider.sdkPkg]: `^${provider.sdkVersion}`,
+      // The SDK this plugin wraps. Published-and-pinned by default; a git
+      // tag when the project says so, because an unpublished SDK otherwise
+      // leaves this package unable to install at all. See sdkDependency.
+      [provider.sdkPkg]: sdkDependency(model, target, provider),
       ...dep('prod'),
     },
     peerDependencies: dep('peer'),
