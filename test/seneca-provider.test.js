@@ -704,6 +704,125 @@ describe('seneca-provider target, from its package', () => {
   })
 
 
+  // HOW THE PROVIDER DEPENDS ON THE SDK IT WRAPS.
+  //
+  // The default is the published package, pinned. That is wrong whenever the
+  // SDK is not on a registry: the dependency 404s and the provider cannot be
+  // installed, built, tested or released at all. @seneca/github-provider sat
+  // in exactly that state, so the git-tag form is not a convenience.
+  describe('the sdk dependency', () => {
+
+    const manifestDep = async (t, overlay) => {
+      if (!outsideSupported) {
+        return t.skip('the installed @voxgig/sdkgen test kit has no `outside` '
+          + 'support, so out-of-tree generation cannot be expressed here')
+      }
+
+      const { outside } = await generateInto(consumer, {
+        model: consumerModel(consumer.sdk,
+          "main: kit: target: 'seneca-provider': output: path: '" + OUT + "'\n"
+          + overlay),
+        outside: [OUT],
+      })
+
+      const pkg = JSON.parse(outside[OUT]['package.json'])
+      const sdkpkg = Object.keys(pkg.dependencies)
+        .find((n) => !n.startsWith('@seneca/'))
+
+      return { pkg, sdkpkg, spec: pkg.dependencies[sdkpkg] }
+    }
+
+
+    test('defaults to the published package, pinned', async (t) => {
+      const got = await manifestDep(t, '')
+      if (null == got) return
+
+      ok(/^\^\d+\.\d+\.\d+/.test(got.spec),
+        'default dependency is not a pinned version: ' + got.spec)
+    })
+
+
+    test('a git kind points at the tag, in the SDK\'s own repo', async (t) => {
+      const got = await manifestDep(t,
+        "main: kit: target: 'seneca-provider': sdk: dep: {\n"
+        + "  kind: 'git'\n"
+        + "  ref: 'v9.9.9'\n"
+        + "}")
+      if (null == got) return
+
+      ok(got.spec.startsWith('github:'),
+        'not a github dependency: ' + got.spec)
+
+      // THE SUBDIRECTORY IS PART OF THE DEFAULT, because npm resolves a git
+      // dependency against the repository ROOT and sdkgen generates the SDK
+      // into `ts/`. Without it the shorthand installs a directory with no
+      // package.json in it — a trap, not a convenience.
+      ok(got.spec.endsWith('#v9.9.9::path:ts'),
+        'the ref and subdirectory did not reach the dependency: ' + got.spec)
+    })
+
+
+    // `.` means the package IS the repository root.
+    test('a dot path drops the subdirectory', async (t) => {
+      const got = await manifestDep(t,
+        "main: kit: target: 'seneca-provider': sdk: dep: {\n"
+        + "  kind: 'git'\n"
+        + "  ref: 'v9.9.9'\n"
+        + "  path: '.'\n"
+        + "}")
+      if (null == got) return
+
+      ok(got.spec.endsWith('#v9.9.9'),
+        'a root package still carries a path: ' + got.spec)
+      ok(!got.spec.includes('::path:'),
+        'a root package still carries a path: ' + got.spec)
+    })
+
+
+    // NPM RESOLVES A GIT DEPENDENCY AGAINST THE REPOSITORY ROOT, and sdkgen
+    // generates the SDK into `ts/`. A project whose SDK package is therefore
+    // unreachable by `github:owner/repo#ref` states the whole value instead,
+    // and it must survive verbatim — composing it would defeat the point.
+    test('an explicit spec is emitted verbatim', async (t) => {
+      const url = 'https://github.com/acme/sdk/releases/download/v1/sdk-1.tgz'
+      const got = await manifestDep(t,
+        "main: kit: target: 'seneca-provider': sdk: dep: spec: '" + url + "'")
+      if (null == got) return
+
+      strictEqual(got.spec, url)
+    })
+
+
+    // A git dependency with no ref follows the default branch, so an install
+    // today and an install tomorrow can differ. Refusing is the whole reason
+    // the ref is not optional.
+    test('a git kind with no ref is refused, by name', async (t) => {
+      if (!outsideSupported) {
+        return t.skip('the installed @voxgig/sdkgen test kit has no `outside` '
+          + 'support, so out-of-tree generation cannot be expressed here')
+      }
+
+      let err = null
+      try {
+        await generateInto(consumer, {
+          model: consumerModel(consumer.sdk,
+            "main: kit: target: 'seneca-provider': output: path: '" + OUT + "'\n"
+            + "main: kit: target: 'seneca-provider': sdk: dep: kind: 'git'"),
+          outside: [OUT],
+        })
+      }
+      catch (e) {
+        err = e
+      }
+
+      ok(null != err, 'a git dependency with no ref generated anyway')
+      ok(/ref/.test(String(err.message)),
+        'the refusal does not name the missing ref: ' + err.message)
+    })
+
+  })
+
+
   // THE CONTENT HALF OF `output: sdkrel`.
   //
   // sdkgen's `external.test.ts` owns the mechanism — that the value is
