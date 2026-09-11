@@ -46,6 +46,23 @@ function removeAddresses(e: any): boolean {
 }
 
 
+// WOULD THIS CMD REFUSE? A cmd whose only route addresses a different
+// resource does not send the request (Main's `misaddressed`), so a test that
+// drives it reaches the refusal and nothing beyond — a parent-key guard, a
+// round-trip's update leg, a plain-save assertion. Each such test is skipped
+// here and the refusal is pinned by its own `<entity>-<cmd>-refused`.
+// What a refusing cmd's route DOES address, for the message and the note.
+function addressNames(e: any, cmd: string): string[] {
+  const keys = (e.opParents || {})[cmd] || []
+  return 0 < keys.length ? keys : ['nothing more specific']
+}
+
+
+function cmdRefuses(e: any, cmd: string): boolean {
+  return true === (e.idmisaddressed || {})[cmd]
+}
+
+
 // The name of the entity a parent path param addresses, or '' when the model
 // has none of that name.
 //
@@ -865,8 +882,12 @@ describe('${provider.fileBase}', () => {
         // list is parent-scoped, which fails for e.g. an entity guarded on
         // load/update/remove but whose list is unscoped (GitHub's `repo`:
         // owner guards load, not list).
+        // AND NOT A CMD THAT REFUSES. A refusing cmd emits no guards at all
+        // — the refusal replaces them — so a test driving it asserted a
+        // "<key> is required" message that no longer exists.
         const guardOp = ['list', 'load', 'update', 'remove']
-          .find((op: string) => (e.opParents[op] || []).includes(key))
+          .find((op: string) => (e.opParents[op] || []).includes(key) &&
+            !cmdRefuses(e, op))
 
         // Not for a composite key: there is no separate parent guard to
         // trip, because the parents live inside the id. needs-full-id above
@@ -962,24 +983,37 @@ ${!loadHasKey(e) ? '' : `
       // transport implements create/update/remove, so this needs no server.
       each(provider.entities, (e: any) => {
         if (e.cmds.includes('save') && e.cmds.includes('remove')) {
-          if (compositeRoundTrip(e) && removeAddresses(e)) {
+          if (compositeRoundTrip(e) && removeAddresses(e) &&
+            !cmdRefuses(e, 'update')) {
             Content(`
 ` + crudTest(provider, e, 'offline'))
           }
+          else if (removeAddresses(e) && cmdRefuses(e, 'update')) {
+            Content(`
+  // NO ${e.name} create/update/remove round-trip: THIS API HAS NO UPDATE
+  // ROUTE FOR ONE ${e.name}. Its update route addresses
+  // \`${addressNames(e, 'update').join('\`, \`')}\`, not
+  // \`${0 < idPartsOf(e).length ?
+              idPartsOf(e).join(String(e.idsep || '/')) : e.rk}\`, so the update leg of a round-trip
+  // would change a different record. The cmd refuses instead — see
+  // ${e.name}-update-refused. Create and remove are unaffected.
+
+`)
+          }
           else if (!removeAddresses(e)) {
             // Said in the file rather than silently omitted: a missing test
-            // that nobody can see is how a gap becomes permanent.
+            // that nobody can see is how a gap becomes permanent. And the
+            // refusal itself IS tested, below.
             Content(`
-  // NO ${e.name} create/update/remove round-trip: THE REMOVE CANNOT ADDRESS
-  // ONE RECORD.
+  // NO ${e.name} create/update/remove round-trip: THIS API HAS NO REMOVE
+  // ROUTE FOR ONE ${e.name}.
   //
   // The key is \`${0 < idPartsOf(e).length ?
-              idPartsOf(e).join(String(e.idsep || '/')) : e.rk}\`, and the remove route does not take it. It
-  // addresses ${0 === e.parents.length ? 'nothing more specific' :
-                '\`' + e.parents.join('\`, \`') + '\` and no further'}, so a
-  // remove deletes whichever record the API answers with rather than the one
-  // this test created — offline, usually a SEEDED record, leaving the
-  // round-trip to fail on its own record surviving.
+              idPartsOf(e).join(String(e.idsep || '/')) : e.rk}\`, which the remove route does not
+  // take — it addresses ${0 === e.parents.length ? 'nothing more specific' :
+                '\`' + e.parents.join('\`, \`') + '\` and no further'}. So there is
+  // no record for this test to remove, and the cmd refuses rather than
+  // deleting whatever that route names: see ${e.name}-remove-refused.
   //
   // This befalls an entity whose ops address DIFFERENT resources, which a
   // tag-derived entity can. Reads and lists are unaffected.
@@ -1004,6 +1038,39 @@ ${!loadHasKey(e) ? '' : `
 
 `)
           }
+        }
+      })
+
+
+      // THE REFUSAL. A cmd whose only route addresses a different resource
+      // must not send the request — `migration`'s remove would delete a
+      // repository's migration archive, `user`'s a GPG key, `pull`'s a
+      // review comment, with the caller's id dropped and a successful reply.
+      // That is the worst possible answer, so it is refused, and refused
+      // BY NAME: the message says which key the route does not take.
+      each(provider.entities, (e: any) => {
+        for (const cmd of ['remove', 'update']) {
+          if (true !== (e.idmisaddressed || {})[cmd]) {
+            continue
+          }
+
+          // `update` is reached through save$ on an entity CARRYING an id —
+          // that is what makes it an update rather than a create.
+          const call = 'remove' === cmd ?
+            `remove$({ ${parentPairs(e, false)}id: '${entIdLiteral(e, '0')}' })` :
+            `make$({ ${parentPairs(e, false)}id: '${entIdLiteral(e, '0')}' }).save$()`
+
+          Content(`
+  it('${e.name}-${cmd}-refused', async () => {
+    const seneca = await makeSeneca()
+
+    await assert.rejects(
+      () => seneca.entity('provider/${provider.lower}/${e.name}').${call},
+      /has no ${cmd} route for one ${e.name}/,
+    )
+  })
+
+`)
         }
       })
 
@@ -1073,7 +1140,8 @@ ${!loadHasKey(e) ? '' : `
         // The ACTION tests below are not gated on any of this. They are what
         // this entity does have.
         const canPlainSave = e.cmds.includes('load') &&
-          e.canonicalOps.includes('update')
+          e.canonicalOps.includes('update') &&
+          !cmdRefuses(e, 'update')
 
         if (0 < acts.length && e.cmds.includes('save')) {
           const mut = canPlainSave ? mutableField(e) : ''
