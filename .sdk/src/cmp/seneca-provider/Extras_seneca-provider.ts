@@ -1657,10 +1657,18 @@ jobs:
     runs-on: \${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v7
+      # EVERY ACTION IS PINNED TO A SHA, with the version in a comment.
+      #
+      # Not a preference: an organisation can require it (the repository
+      # setting is sha_pinning_required), and a workflow naming a TAG then
+      # fails to START — no jobs, no logs, just a startup_failure on every
+      # push. The senecajs org has that policy on, so this workflow never ran
+      # once in the repository it was generated for, and weeks of red marks
+      # said nothing about the code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Use Node.js \${{ matrix.node-version }}
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: \${{ matrix.node-version }}
 
@@ -1763,9 +1771,9 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24.x
           registry-url: 'https://registry.npmjs.org'

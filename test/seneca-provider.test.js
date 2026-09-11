@@ -704,6 +704,44 @@ describe('seneca-provider target, from its package', () => {
   })
 
 
+  // EVERY ACTION IN A GENERATED WORKFLOW IS PINNED TO A SHA.
+  //
+  // An organisation can REQUIRE it (`sha_pinning_required`), and a workflow
+  // naming a tag then fails to START: no jobs, no logs, just
+  // `startup_failure` on every push. The senecajs org has that policy on, so
+  // the generated build workflow never ran once in the repository it was
+  // generated for — weeks of red marks that said nothing about the code.
+  test('generated workflows pin every action to a SHA', async (t) => {
+    if (!outsideSupported) {
+      return t.skip('the installed @voxgig/sdkgen test kit has no `outside` '
+        + 'support, so out-of-tree generation cannot be expressed here')
+    }
+
+    const { outside } = await generateInto(consumer, {
+      model: consumerModel(consumer.sdk,
+        "main: kit: target: 'seneca-provider': output: path: '" + OUT + "'"),
+      outside: [OUT],
+    })
+
+    const workflows = Object.keys(outside[OUT])
+      .filter((p) => p.startsWith('.github/workflows/'))
+
+    ok(0 < workflows.length, 'no workflows were generated')
+
+    for (const wf of workflows) {
+      for (const line of outside[OUT][wf].split('\n')) {
+        const m = /^\s*(?:-\s+)?uses:\s*(\S+)/.exec(line)
+        if (null == m) {
+          continue
+        }
+        ok(/@[0-9a-f]{40}$/.test(m[1]),
+          wf + ' names an action by tag, which cannot start under a '
+          + 'sha-pinning policy: ' + m[1])
+      }
+    }
+  })
+
+
   // HOW THE PROVIDER DEPENDS ON THE SDK IT WRAPS.
   //
   // The default is the published package, pinned. That is wrong whenever the
