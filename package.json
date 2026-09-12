@@ -1,6 +1,6 @@
 {
   "name": "@voxgig/sdkgen-infrapack",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "description": "Infrastructure-provider targets for the Voxgig SDK Generator: Seneca provider.",
   "type": "commonjs",
   "license": "MIT",

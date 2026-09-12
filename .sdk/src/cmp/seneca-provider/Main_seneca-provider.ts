@@ -723,6 +723,11 @@ const Main = cmp(function Main(props: any) {
     // CI note says so, because "npm install is all you need" stops being
     // true the moment git or a tarball URL is in the path.
     sdkGit: !sdkDep.startsWith('^'),
+    // WHICH non-registry kind, because the CI note has to be true: a git
+    // dependency needs git on PATH and a release asset does not, and a note
+    // that says the wrong one is worse than no note.
+    sdkDepKind: sdkDep.startsWith('github:') ? 'git' :
+      (sdkDep.startsWith('http') ? 'release' : 'npm'),
     // THE OPT-IN A NON-REGISTRY DEPENDENCY NEEDS, or ''.
     //
     // npm 12 defaults `allow-git` and `allow-remote` to "none" and REFUSES
