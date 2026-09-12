@@ -84,6 +84,17 @@ main: kit: target: 'seneca-provider': {
   # Windows alike. A knob that produces an uninstallable dependency is worse
   # than no knob.
   #
+  # NPM 12 REFUSES BOTH BY DEFAULT. `allow-git` and `allow-remote` default to
+  # "none", so a git or tarball dependency is rejected before anything is
+  # fetched (EALLOWGIT / EALLOWREMOTE). The generated CI passes the matching
+  # `--allow-*=all` for whichever kind is configured, because the project
+  # opting into what it declared is reasonable — but a CONSUMER of the
+  # published provider gets no such flag, and will hit the same wall.
+  #
+  # So this is a stopgap for an SDK that is not published YET, not a
+  # substitute for publishing it. An SDK on a registry needs none of it, and
+  # the default `npm` kind is the one that works everywhere.
+  #
   # `spec` states the whole dependency value outright and wins over
   # everything.
   sdk: dep: {

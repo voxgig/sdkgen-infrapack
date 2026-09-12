@@ -3,7 +3,7 @@
     "package": 1
   },
   "name": "@voxgig/sdkgen-infrapack",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "engines": {
     "sdkgen": ">=4.12.0"
   },

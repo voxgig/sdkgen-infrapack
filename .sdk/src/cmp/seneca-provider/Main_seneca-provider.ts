@@ -723,6 +723,21 @@ const Main = cmp(function Main(props: any) {
     // CI note says so, because "npm install is all you need" stops being
     // true the moment git or a tarball URL is in the path.
     sdkGit: !sdkDep.startsWith('^'),
+    // THE OPT-IN A NON-REGISTRY DEPENDENCY NEEDS, or ''.
+    //
+    // npm 12 defaults `allow-git` and `allow-remote` to "none" and REFUSES
+    // such a dependency outright — EALLOWGIT / EALLOWREMOTE, before it
+    // fetches anything. Older npm allowed both, so a workflow that passes
+    // today fails the moment its runner image updates; this provider's own
+    // publish run failed that way within hours of the build run passing,
+    // because publishing upgrades npm first.
+    //
+    // Emitted ONLY where the project chose such a dependency: it is the
+    // project opting into what it already declared, not a default weakened
+    // for everyone. Publishing the SDK remains the durable answer, and this
+    // flag exists so an unpublished one is workable meanwhile.
+    sdkInstallFlag: sdkDep.startsWith('github:') ? ' --allow-git=all' :
+      (sdkDep.startsWith('http') ? ' --allow-remote=all' : ''),
     repoUrl: repo.url,
     // The SDK's own repo, for pointing at the companion test server which is
     // only distributed in source.

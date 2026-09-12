@@ -1699,7 +1699,7 @@ ${!provider.liveApp ? '' : `
           done
           echo "server did not start; live tests will skip"
 `}
-      - run: npm install
+      - run: npm install${provider.sdkInstallFlag}
 
       # The Seneca host framework is a PEER dependency, so the test suite needs
       # it installed explicitly. --no-save keeps npm from rewriting the peer
@@ -1798,7 +1798,7 @@ jobs:
           node-version: 24.x
 
       # install, not ci: this package does not commit a lockfile.
-      - run: npm install
+      - run: npm install${provider.sdkInstallFlag}
 
       # The Seneca host framework is a PEER dependency, so the test suite
       # needs it installed explicitly.
