@@ -742,6 +742,67 @@ describe('seneca-provider target, from its package', () => {
   })
 
 
+  // THE PUBLISH CREDENTIAL NEVER SHARES A JOB WITH PROJECT CODE.
+  //
+  // Trusted publishing mints a credential for any job granted
+  // `id-token: write`, and a dependency lifecycle script can ask the runner
+  // for it. A job that both installs dependencies and holds that permission
+  // can therefore be made to publish as this package before its own gates
+  // finish — so the install lives in a job with no id-token, and the
+  // credential in a job that installs nothing.
+  test('the publish job installs nothing and runs no project code', async (t) => {
+    if (!outsideSupported) {
+      return t.skip('the installed @voxgig/sdkgen test kit has no `outside` '
+        + 'support, so out-of-tree generation cannot be expressed here')
+    }
+
+    const { outside } = await generateInto(consumer, {
+      model: consumerModel(consumer.sdk,
+        "main: kit: target: 'seneca-provider': output: path: '" + OUT + "'"),
+      outside: [OUT],
+    })
+
+    const wf = outside[OUT]['.github/workflows/publish.yml']
+    ok(null != wf, 'no publish workflow was generated')
+
+    // Split the file at each top-level job key, so each job's steps are
+    // attributed to the job that actually holds them.
+    const jobs = {}
+    let current = null
+    for (const line of wf.split('\n')) {
+      const m = /^  ([a-z][a-z0-9_-]*):\s*$/.exec(line)
+      if (null != m) {
+        current = m[1]
+        jobs[current] = []
+        continue
+      }
+      if (null != current) {
+        jobs[current].push(line)
+      }
+    }
+
+    const credentialed = Object.keys(jobs)
+      .filter((j) => jobs[j].some((l) => /id-token:\s*write/.test(l)))
+
+    ok(0 < credentialed.length,
+      'no job requests id-token: write — trusted publishing cannot work')
+
+    for (const job of credentialed) {
+      const body = jobs[job].join('\n')
+
+      // `npm install -g npm@latest` is npm itself, not a project dependency:
+      // no package.json is consulted for it.
+      const installs = /run:\s*npm (install|ci)(?!\s+-g)/.test(body)
+      ok(!installs,
+        'job "' + job + '" holds the publish credential AND installs '
+        + 'project dependencies')
+
+      ok(!/npm (run build|test)\b/.test(body),
+        'job "' + job + '" holds the publish credential AND runs project code')
+    }
+  })
+
+
   // HOW THE PROVIDER DEPENDS ON THE SDK IT WRAPS.
   //
   // The default is the published package, pinned. That is wrong whenever the

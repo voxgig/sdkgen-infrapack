@@ -1741,14 +1741,30 @@ ${!provider.liveApp ? '' : `
 # lets npm exchange a GitHub OIDC token for a short-lived publish credential,
 # and provenance is attached automatically.
 #
+# TWO JOBS, BECAUSE THEY NEED DIFFERENT PRIVILEGES.
+#
+#   verify   contents: read, and nothing else. Runs npm install, the build
+#            and the tests — i.e. dependency lifecycle scripts and project
+#            code. It holds no publish credential.
+#   publish  id-token: write, contents: read. Installs NO project
+#            dependencies and runs NO project code: this package ships
+#            \`dist\`, which is committed, so nothing needs building to pack.
+#
+# THE SPLIT IS THE POINT. A compromised dependency lifecycle script can ask
+# the runner for any OIDC token the JOB is permitted to mint, so a job that
+# both installs dependencies and holds \`id-token: write\` can be made to
+# publish as this package before its own gates finish. Keeping the install in
+# a job with no id-token, and the credential in a job that installs nothing,
+# is what makes the isolation real rather than nominal.
+#
 # The trusted publisher must be registered on npmjs.com for this package
 # against THIS filename (publish.yml); renaming this file breaks publishing
 # until the npm-side config is updated to match.
 #
-# npm cannot publish a package's FIRST version this way — the settings page
-# that configures a trusted publisher only exists once a version is there. So
-# release ${provider.version} by hand once, configure the publisher, and every
-# release after that is a tag push.
+# npm cannot configure a trusted publisher for a package that does not exist
+# yet — the settings page appears once a version is on the registry. So the
+# FIRST version of a new package is published by hand, once, with an
+# authenticated npm; every release after that is a tag push.
 #
 # Release flow: bump the version in the SDK model
 # (\`main: kit: target: 'seneca-provider': publish: version\`), regenerate,
@@ -1762,10 +1778,77 @@ on:
   workflow_dispatch:
 
 jobs:
-  publish:
-    name: npm publish
+  verify:
+    name: verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    # Deliberately the default-minimum. This job runs third-party code.
+    permissions:
+      contents: read
+
+    outputs:
+      version: \${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24.x
+
+      # install, not ci: this package does not commit a lockfile.
+      - run: npm install
+
+      # The Seneca host framework is a PEER dependency, so the test suite
+      # needs it installed explicitly.
+      #
+      # --no-save IS LOAD-BEARING. Without it npm rewrites the peer ranges in
+      # package.json to carets on whatever it resolved, and a later publish
+      # ships that rewritten manifest — so an authored \`>=26\` reaches
+      # consumers as \`^28.1.0\` and the package refuses to install for anyone
+      # on a newer major. The repo looks fine; only the artifact is narrowed.
+      - run: npm i --no-save seneca seneca-entity seneca-promisify @seneca/provider @seneca/env
+
+      - run: npm run build
+      - run: npm test
+
+      # The tag must match what the manifest declares, or a tag push silently
+      # republishes whatever version happens to be in package.json.
+      - name: Check the tag matches the manifest version
+        id: version
+        run: |
+          set -euo pipefail
+          PKG=\$(node -p "require('./package.json').version")
+          if [ "\${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            TAG="\${GITHUB_REF_NAME#v}"
+            if [ "\$TAG" != "\$PKG" ]; then
+              echo "::error::tag v\$TAG does not match package.json \$PKG"
+              exit 1
+            fi
+          fi
+          echo "version=\$PKG" >> "\$GITHUB_OUTPUT"
+
+      # WHAT THE PUBLISH JOB WILL PACK, checked HERE where the code already
+      # ran. That job builds nothing, so a missing or stale \`dist\` would
+      # otherwise be discovered by consumers rather than by this workflow.
+      - name: The committed dist matches the source
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- dist; then
+            echo "::error::dist/ is not up to date with src/ -- rebuild and commit it"
+            git diff --stat -- dist
+            exit 1
+          fi
+
+  publish:
+    name: npm publish
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # The ONLY job holding the publish credential — and it installs no
+    # project dependencies and runs no project code. See the header.
     permissions:
       id-token: write
       contents: read
@@ -1778,39 +1861,30 @@ jobs:
           node-version: 24.x
           registry-url: 'https://registry.npmjs.org'
 
-      # Trusted publishing requires npm >= 11.5.1.
+      # Trusted publishing requires npm >= 11.5.1. This is npm itself, not a
+      # project dependency: no package.json here is consulted.
       - name: Use a trusted-publishing capable npm
         run: npm install -g npm@latest
 
-      # install, not ci: this package does not commit a lockfile.
-      - run: npm install
-
-      # The Seneca host framework is a PEER dependency, so the test suite
-      # needs it installed explicitly.
-      #
-      # --no-save IS LOAD-BEARING. Without it npm rewrites the peer ranges in
-      # package.json to carets on whatever it resolved, and \`npm publish\`
-      # below then ships that rewritten manifest — so an authored \`>=26\`
-      # reaches consumers as \`^28.1.0\` and the package refuses to install for
-      # anyone on a newer major. The repo looks fine; only the artifact is
-      # narrowed. Install into node_modules, leave the manifest alone.
-      - run: npm i --no-save seneca seneca-entity seneca-promisify @seneca/provider @seneca/env
-
-      - run: npm run build
-      - run: npm test
-
-      # The tag must match what the manifest declares, or a tag push silently
-      # republishes whatever version happens to be in package.json.
-      - name: Check the tag matches the manifest version
+      # THE REGISTRY IS THE SOURCE OF TRUTH FOR "IS THIS RELEASED", not the
+      # tag. A re-run of a workflow that already published would otherwise
+      # fail on a version conflict and report a red release that in fact
+      # succeeded.
+      - name: Is this version already on npm?
+        id: registry
+        env:
+          VERSION: \${{ needs.verify.outputs.version }}
         run: |
-          TAG="\${GITHUB_REF_NAME#v}"
-          PKG=$(node -p "require('./package.json').version")
-          if [ "$TAG" != "$PKG" ]; then
-            echo "tag v$TAG does not match package.json $PKG"
-            exit 1
+          set -euo pipefail
+          if npm view "${provider.pkgName}@\$VERSION" version >/dev/null 2>&1; then
+            echo "published=true" >> "\$GITHUB_OUTPUT"
+            echo "\$VERSION is already on npm — skipping publish"
+          else
+            echo "published=false" >> "\$GITHUB_OUTPUT"
           fi
 
       - name: Publish to npm
+        if: steps.registry.outputs.published == 'false'
         run: npm publish --access public
 `)
       })
