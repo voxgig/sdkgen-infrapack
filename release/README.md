@@ -122,7 +122,17 @@ this repository a failed dispatch before anyone thought to check.
    Nothing in the workflow commits: it reads the version already on the
    branch, so the bump stays a reviewable diff.
 2. Run the **publish** workflow from `main`, optionally passing `expect_sha`
-   to refuse the run if `main` has moved since you decided.
+   to refuse the run if `main` has moved since you decided:
+
+   ```sh
+   gh workflow run publish.yml --ref main -f expect_sha=$(git rev-parse HEAD)
+   ```
+
+   `git push` returns before the ref is visible to every GitHub read path, so
+   a dispatch fired immediately after one can resolve the commit BEFORE the
+   release commit — `expect_sha` then refuses, naming the very SHA you just
+   pushed. Poll `git ls-remote origin refs/heads/main` until it matches, then
+   dispatch.
 3. It publishes to npm, then tags `v<version>`.
 
 Publishing happens before tagging, so a tag only ever exists for a release

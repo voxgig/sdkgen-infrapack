@@ -114,6 +114,29 @@ Validate the package itself with:
 npx voxgig-sdkgen package check .
 ```
 
+## Releasing — OIDC dispatch, never a local publish
+
+**NOTHING IS PUBLISHED FROM A WORKSTATION.** The release is performed by
+GitHub Actions over OIDC trusted publishing, and the way you start it is a
+workflow dispatch:
+
+```bash
+gh workflow run publish.yml --ref main -f expect_sha=$(git rev-parse HEAD)
+```
+
+Bump the version in **both** `package.json` and `sdkgen-package.json` first,
+on `main`, in a reviewable commit — nothing in the workflow commits. The
+workflow verifies, publishes to npm, then tags `v<version>`.
+
+Never `npm publish` from a checkout: it goes out over a stored token with no
+provenance. The one exception is a package's very first version, which npm
+gives no way to automate — see [`release/README.md`](release/README.md), which
+carries the full record, the `npm trust` registration, and what the 404 at the
+end of a green run actually means.
+
+Never hand a release back as "run this locally yourself". A release is a
+dispatch: prepare the commit, then dispatch the workflow.
+
 ## Provenance
 
 `seneca-provider` was generated from the same trees that shipped inside
