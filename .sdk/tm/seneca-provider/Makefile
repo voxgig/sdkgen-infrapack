@@ -68,8 +68,14 @@ sdk-src:
 	fi; \
 	echo "sdk-src: $(SDK_DIR) is at $(SDK_TAG)"
 
+# Removes the fetched checkout AND the folder that held it. `rm -rf` on the
+# checkout alone left an empty `.sdksrc/` behind — gitignored, so harmless,
+# but it makes `sdk-clean` look like it did not finish. rmdir rather than
+# another rm -rf: if anything else is in there, someone put it there, and
+# removing it is not this target's business.
 sdk-clean:
 	rm -rf "$(SDK_DIR)"
+	@rmdir "$$(dirname "$(SDK_DIR)")" 2>/dev/null || true
 
 # Regenerate this repository from the pinned SDK.
 #
