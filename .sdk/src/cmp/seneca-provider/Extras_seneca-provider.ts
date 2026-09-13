@@ -18,6 +18,58 @@ import {
 // generated provider is verified without a server.
 
 
+// WHERE A FETCHED SDK CHECKOUT LIVES, inside this repo.
+//
+// Fixed, and the same under every layout, which is the whole point: it is
+// what lets the generated docs, the live-test instructions and `make regen`
+// name the SDK source without naming anyone's directory layout. Gitignored —
+// the checkout is derived from the pin and disposable, so committing it would
+// vendor the SDK into a repo that already depends on it.
+//
+// NOT a git submodule. A submodule pins a COMMIT and puts the pin in git's
+// own plumbing, where updating it is a second repository operation and a
+// stale one is invisible in a normal diff. The pin here is an ordinary
+// committed file naming a TAG, regenerated from the model like everything
+// else, so it moves with the SDK version it belongs to and shows up in review.
+const SDK_SRC_DIR = '.sdksrc'
+
+
+// The SDK this provider was generated from: repository, release tag, and the
+// published package the tag corresponds to.
+//
+// Committed, and REGENERATED — so it cannot drift from the dependency in
+// package.json, which comes from the same model version. The tag is
+// `v<version>` because that is what the SDK's publish workflow cuts for its
+// primary npm target.
+//
+// This is the file that makes the repo independently buildable: with it, the
+// SDK that generates this provider can be fetched from scratch, at the exact
+// revision that generated it, by a script that knows nothing else.
+const SdkPin = cmp(function SdkPin(props: any) {
+  const { provider } = props
+
+  // Nothing to pin without a repository to fetch from. Emitting a pin with an
+  // empty `repo` would be a file that looks like a promise and cannot be
+  // kept.
+  if (!provider.sdkPinned) {
+    return
+  }
+
+  File({ name: 'sdk-pin.json' }, () => {
+    Content(JSON.stringify({
+      note: 'GENERATED. The SDK this provider is generated from. ' +
+        '`make sdk-src` fetches it; `make regen` regenerates this repo ' +
+        'from it. Edit the SDK project model, not this file.',
+      repo: provider.sdkRepoUrl,
+      tag: provider.sdkTag,
+      dir: provider.sdkSrc,
+      package: provider.sdkPkg,
+      version: provider.sdkVersion,
+    }, null, 2) + '\n')
+  })
+})
+
+
 // Does this entity's load op have a real identifying param (path or
 // required query), e.g. GET /result?trace_id=? A paramless GET has none.
 function loadHasKey(e: any): boolean {
@@ -710,7 +762,7 @@ const BasicMessages = require('../dist-test/basic.messages')
 ${'' === provider.liveBase ? '' : `
 // The live tests run against the companion test server in the SDK repo
 // (\`app/\`), which serves this by default. Start it with:
-//   cd ${provider.sdkrel}/app && npm start
+//   cd ${provider.sdkSrc}/app && npm start
 const LIVE_BASE = process.env.${provider.ENV}_TEST_BASE || '${provider.liveBase}'
 `}
 
@@ -1427,7 +1479,7 @@ async function makeSeneca() {
       Content(`/* Manual script: read from a running ${provider.api} server.
  *
  * Start the companion test server from the SDK repo first:
- *   cd ${provider.sdkrel}/app && npm start
+ *   cd ${provider.sdkSrc}/app && npm start
  *
  * Then:  node test/live.js
  */
@@ -1501,7 +1553,7 @@ async function run() {
         Content(`/* Manual script: exercise the full CRUD cycle against a running server.
  *
  * Start the companion test server from the SDK repo first:
- *   cd ${provider.sdkrel}/app && npm start
+ *   cd ${provider.sdkSrc}/app && npm start
  *
  * Then:  node test/quick.js
  *
@@ -2220,7 +2272,7 @@ The companion test server is distributed in the SDK's source repository
 only. From a checkout beside this one:
 
 \`\`\`sh
-cd ${provider.sdkrel}/app && npm start
+cd ${provider.sdkSrc}/app && npm start
 \`\`\`
 
 Then \`node test/live.js\` reads from it, and \`node test/quick.js\` runs a
@@ -2476,30 +2528,27 @@ back as a puzzling 404.
 
 `
 
-  // The clone lands in a directory named for the repository, so the cd that
-  // follows can be exact rather than "wherever you put it". With no repo url
-  // to clone from, the only path anyone can be told is the relative one back
-  // to the SDK project.
-  const sdkRepo = String(provider.sdkRepoUrl || '')
-  const sdkDir = sdkRepo.replace(/\/+$/, '').split('/').pop() || 'sdk'
-  const appDir = '' === sdkRepo ? `${provider.sdkrel}/app` : `${sdkDir}/app`
+  // ONE PATH, BOTH WAYS IN. `provider.sdkSrc` is where the SDK source is
+  // reached: the pinned fetch target when the SDK has a repository, and the
+  // relative walk back when it has none and nothing can be fetched. So the
+  // instruction differs but the path does not, and neither spelling carries a
+  // directory name off anyone's machine.
+  const appDir = `${provider.sdkSrc}/app`
 
-  const getServer = '' === sdkRepo ?
+  const getServer = provider.sdkPinned ?
     `You also need a server to talk to. The SDK itself installs from npm,
 but its test server does not — it ships only in the SDK's source
-project, in its \`app\` folder, which is at \`${provider.sdkrel}\`
-relative to this one.
+repository. \`make sdk-src\` fetches that source at the tag this plugin
+was generated from, into \`${provider.sdkSrc}\`:
+
+\`\`\`sh
+$ make sdk-src
+\`\`\`
 ` :
     `You also need a server to talk to. The SDK itself installs from npm,
 but its test server does not — it ships only in the SDK's source
-repository, so clone that:
-
-\`\`\`sh
-$ git clone ${sdkRepo}.git
-\`\`\`
-
-If you already have that checkout beside this plugin, it is at
-\`${provider.sdkrel}\`, and you can skip the clone.
+project, in its \`app\` folder, which is at \`${provider.sdkSrc}\`
+relative to this one.
 `
 
   // What a bare GET on the probe route answers with, when the model has one.
@@ -2921,11 +2970,11 @@ calls. Your seeded ids will not exist there, so read the ids you need
 from a \`list$\` first.
 
 `)
-      if (hasServer && '' !== sdkRepo) {
+      if (hasServer && provider.sdkPinned) {
         Content(`A test server that answers on that address is distributed in the SDK's
-source repository, which is the only place it ships. Clone
-\`${sdkRepo}\`, then run \`npm install\`, \`npm run build\` and
-\`npm start\` in its \`app\` folder.
+source repository, which is the only place it ships. \`make sdk-src\`
+fetches that source at the pinned tag; then run \`npm install\`,
+\`npm run build\` and \`npm start\` in its \`app\` folder.
 
 `)
       }
@@ -3495,20 +3544,27 @@ $ npm install
 \`\`\`
 
 If you are changing the SDK and this plugin together, point npm at a
-local checkout instead. Clone the SDK beside this repository, at the path
-this project expects, and build it — it does not commit its build output:
+local checkout instead. \`make sdk-src\` fetches the SDK this repository is
+generated from — the repository and tag in \`sdk-pin.json\` — into
+\`${provider.sdkSrc}\`, then build it, because it does not commit its build
+output:
 
 \`\`\`sh
-$ git clone ${provider.sdkRepoUrl}.git \\
-    ${provider.sdkrel}
-$ cd ${provider.sdkrel}/ts
+$ make sdk-src
+$ cd ${provider.sdkSrc}/ts
 $ npm install && npm run build
+\`\`\`
+
+Already have that checkout elsewhere? Point the same target at it:
+
+\`\`\`sh
+$ make sdk-src SDK_SRC_FROM=../path/to/your/checkout
 \`\`\`
 
 Then link it in, without committing the change to \`package.json\`:
 
 \`\`\`sh
-$ npm install --no-save ${provider.sdkrel}/ts
+$ npm install --no-save ${provider.sdkSrc}/ts
 \`\`\`
 
 npm creates a symlink, so a rebuild of the SDK is picked up here with no
@@ -3562,10 +3618,12 @@ $ TEST_PATTERN=${pattern} npm run test-some
 
   if ('' !== liveBase) {
     sec('Run the live tests against a server', `The companion test server ships only in the SDK's source repository, not
-in the published package. From the checkout beside this one:
+in the published package. \`make sdk-src\` fetches that source at the pinned
+tag; the server is in its \`app\` folder:
 
 \`\`\`sh
-$ cd ${provider.sdkrel}/app
+$ make sdk-src
+$ cd ${provider.sdkSrc}/app
 $ npm install && npm run build && npm start
 \`\`\`
 
@@ -4795,9 +4853,10 @@ edit: the edit will not survive. The next generation run overwrites this
 repository, without a merge and without a warning. A fix applied here is a fix
 that has to be applied again, silently, forever.
 
-The source of truth is the SDK project's model — \`${provider.sdkrel}\` from
-here, if both are checked out — together with the sdkgen component that emits
-this target. A change to *what* the API offers belongs in the model; a change to
+The source of truth is the SDK project's model — the repository and tag named
+in \`sdk-pin.json\`, which \`make sdk-src\` fetches to \`${provider.sdkSrc}\` —
+together with the sdkgen component that emits this target. A change to *what*
+the API offers belongs in the model; a change to
 *how* the provider expresses it belongs in the component. Both are versioned,
 both regenerate every provider built this way rather than just this one, and
 both are where a fix is worth making. See
@@ -4952,4 +5011,6 @@ export {
   Docs,
   seedRecord,
   parentSeed,
+  SdkPin,
+  SDK_SRC_DIR,
 }

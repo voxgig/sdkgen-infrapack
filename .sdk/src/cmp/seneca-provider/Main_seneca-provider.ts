@@ -15,7 +15,9 @@ import {
   KIT,
 } from '@voxgig/apidef'
 
-import { Tests, Scripts, Workflow, Readme, Docs } from './Extras_seneca-provider'
+import {
+  Tests, Scripts, Workflow, Readme, Docs, SdkPin, SDK_SRC_DIR,
+} from './Extras_seneca-provider'
 import { Gitignore } from './Gitignore_seneca-provider'
 
 
@@ -675,6 +677,37 @@ const Main = cmp(function Main(props: any) {
   // once by the external pass — see cmp/ExternalTarget.
   const sdkrel = ctx$.sdkrelpath || '..'
 
+  // WHERE THE SDK SOURCE IS, AND WHY IT IS NOT `sdkrel`.
+  //
+  // `sdkrel` is a walk back through the FILESYSTEM, and it is committed here
+  // — into the docs, the live-test headers and the develop-locally recipe.
+  // That makes generated content depend on one machine's directory layout.
+  // voxgig-solardemo-sdk committed '../../voxgig-sdk/voxgig-solardemo-sdk',
+  // where `voxgig-sdk` is the name of a workspace directory on one laptop and
+  // no part of any model; a second developer with both repos under a
+  // differently named parent regenerates a diff in tracked files and follows
+  // instructions that are wrong on one of the two machines.
+  //
+  // So the SDK is named by its PIN instead — repository and release tag, both
+  // facts about the SDK rather than about anyone's disk — and fetched to a
+  // fixed path INSIDE this repo. `make sdk-src` puts it there. The path is
+  // then the same string on every machine and under every layout, which is
+  // what lets this repo regenerate itself from a checkout it fetched (see
+  // SdkPin and the Makefile).
+  //
+  // The tag is `v<version>`: the SDK's publish workflow cuts exactly that for
+  // its primary npm target, so the pin needs no separate bookkeeping and
+  // cannot drift from the dependency version.
+  const sdkRepoUrl = String(repoInfo(model).repoUrl || '')
+  const sdkTag = 'v' + sdkVersion
+  const sdkRepoDir = sdkRepoUrl.replace(/[/]+$/, '').split('/').pop() || 'sdk'
+
+  // With NO repo url there is nothing to pin and nothing to clone, so the
+  // only path anyone can be told is still the relative one. Honest, and the
+  // case the pin cannot improve.
+  const sdkPinned = '' !== sdkRepoUrl
+  const sdkSrc = sdkPinned ? SDK_SRC_DIR + '/' + sdkRepoDir : sdkrel
+
   // Where a live run points — and whether there is anything honest to point
   // it at.
   //
@@ -746,10 +779,15 @@ const Main = cmp(function Main(props: any) {
     repoUrl: repo.url,
     // The SDK's own repo, for pointing at the companion test server which is
     // only distributed in source.
-    sdkRepoUrl: repoInfo(model).repoUrl,
+    sdkRepoUrl,
+    sdkTag,
+    sdkRepoDir,
+    sdkPinned,
+    // Where the SDK SOURCE is reached, as every generated file spells it.
+    // Layout-independent when the SDK has a repo to pin. See above.
+    sdkSrc,
     api: apiName(model),
     version: packageVersion(model, target.name),
-    sdkrel,
     liveBase,
     liveApp,
     // The sponsor line. @seneca/maintain's `content_readme` check requires
@@ -793,6 +831,7 @@ const Main = cmp(function Main(props: any) {
     replace: { ...ctx$.stdrep },
   })
 
+  SdkPin({ provider })
   PackageJson({ provider, target })
   ProviderSource({ provider })
   ProviderDoc({ provider })

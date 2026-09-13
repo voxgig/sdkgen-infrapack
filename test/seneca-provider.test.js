@@ -930,42 +930,124 @@ describe('seneca-provider target, from its package', () => {
   })
 
 
-  // THE CONTENT HALF OF `output: sdkrel`.
+  // THE SDK SOURCE IS NAMED BY A PIN, NOT BY A PATH ON SOMEONE'S DISK.
   //
-  // sdkgen's `external.test.ts` owns the mechanism — that the value is
-  // derived, that a derivation naming machine-local directories warns, and
-  // that a declared value replaces both. What it can no longer own is that
-  // the value REACHES generated content, because the only component that
-  // reads `ctx$.sdkrelpath` is this target's Main. So that assertion lives
-  // here, next to the component that consumes it.
+  // `output: sdkrel` is the walk back from this repo to the SDK repo through
+  // the filesystem, and it used to be committed here — into the docs, the
+  // live-test instructions and the develop-locally recipe. That made
+  // generated content depend on one machine's directory layout:
+  // voxgig-solardemo-sdk committed '../../voxgig-sdk/voxgig-solardemo-sdk',
+  // where `voxgig-sdk` is a workspace directory on one laptop and no part of
+  // any model. A second developer with both repos under a differently named
+  // parent regenerated a diff in tracked files and read instructions that
+  // were wrong on one of the two machines.
   //
-  // Why it is worth asserting at all: the walk back from the provider repo to
-  // the SDK repo is written into files that are COMMITTED in the provider
-  // repo, so a machine-derived path becomes a tracked diff on the next
-  // developer's machine.
+  // It also made the repo ungenerable from anywhere else: the same model
+  // produces a different provider depending on where the SDK happens to sit,
+  // so two layouts could never both satisfy `check-generate`.
   //
-  // It needs `output: path` as well: `sdkrel` describes the walk back from a
-  // DESTINATION, so in-tree there is nothing for it to describe and Main
-  // falls back to '..'.
-  test('a declared `output: sdkrel` reaches the generated files', async (t) => {
-    if (!outsideSupported) {
-      return t.skip('the installed @voxgig/sdkgen test kit has no `outside` '
-        + 'support, so out-of-tree generation cannot be expressed here')
-    }
+  // sdkgen's `external.test.ts` still owns the MECHANISM — derivation, the
+  // warning, a declared value replacing both. What lives here is that the
+  // value no longer reaches generated content at all.
+  describe('the SDK pin', () => {
 
-    const { outside } = await generateInto(consumer, {
-      model: consumerModel(consumer.sdk,
-        "main: kit: target: 'seneca-provider': output: path: '" + OUT + "'\n" +
-        "main: kit: target: 'seneca-provider': output: sdkrel: '../../acme-sdk'"),
-      outside: [OUT],
+    // The inversion of the test this replaces. Declared as loudly as
+    // possible — an explicit `output: sdkrel` — and still absent from every
+    // generated file.
+    test('a declared `output: sdkrel` reaches NO generated file', async (t) => {
+      if (!outsideSupported) {
+        return t.skip('the installed @voxgig/sdkgen test kit has no `outside` '
+          + 'support, so out-of-tree generation cannot be expressed here')
+      }
+
+      const { outside } = await generateInto(consumer, {
+        model: consumerModel(consumer.sdk,
+          "main: kit: target: 'seneca-provider': output: path: '" + OUT + "'\n" +
+          "main: kit: target: 'seneca-provider': output: sdkrel: '../../acme-sdk'"),
+        outside: [OUT],
+      })
+
+      const leaked = Object.entries(outside[OUT])
+        .filter(([, content]) => String(content).includes('../../acme-sdk'))
+        .map(([p]) => p)
+
+      deepStrictEqual(leaked, [],
+        'a filesystem walk back to the SDK was committed into generated files')
     })
 
-    const named = Object.entries(outside[OUT])
-      .filter(([, content]) => String(content).includes('../../acme-sdk'))
-      .map(([p]) => p)
 
-    ok(0 < named.length,
-      'the declared path back to the SDK project reached no generated file')
+    test('the pin names the SDK repository and its release tag', async (t) => {
+      if (!outsideSupported) {
+        return t.skip('no `outside` support in the installed test kit')
+      }
+
+      const { outside } = await generateInto(consumer, {
+        model: consumerModel(consumer.sdk,
+          "main: kit: target: 'seneca-provider': output: path: '" + OUT + "'"),
+        outside: [OUT],
+      })
+
+      const raw = outside[OUT]['sdk-pin.json']
+      ok(null != raw, 'no sdk-pin.json: ' + Object.keys(outside[OUT]).join(', '))
+
+      const pin = JSON.parse(raw)
+      ok(/^https?:\/\//.test(pin.repo), 'the pin has no repository: ' + pin.repo)
+
+      // `v<version>` is what the SDK's publish workflow cuts for its primary
+      // npm target, so the pin cannot drift from the dependency version.
+      strictEqual(pin.tag, 'v' + pin.version,
+        'the pinned tag is not the release tag for the pinned version')
+    })
+
+
+    // The pin is the committed fact; the checkout is derived from it and
+    // disposable. Committing it would vendor the whole SDK into a repo that
+    // already depends on its published package.
+    test('the fetched checkout is gitignored', async (t) => {
+      if (!outsideSupported) {
+        return t.skip('no `outside` support in the installed test kit')
+      }
+
+      const { outside } = await generateInto(consumer, {
+        model: consumerModel(consumer.sdk,
+          "main: kit: target: 'seneca-provider': output: path: '" + OUT + "'"),
+        outside: [OUT],
+      })
+
+      const pin = JSON.parse(outside[OUT]['sdk-pin.json'])
+      const ignore = String(outside[OUT]['.gitignore'] || '')
+
+      ok(ignore.split('\n').some((l) => l.trim() === '.sdksrc/'),
+        'the fetched SDK checkout is not gitignored:\n' + ignore.slice(-400))
+      ok(pin.dir.startsWith('.sdksrc/'),
+        'the pin points outside the ignored folder: ' + pin.dir)
+    })
+
+
+    // Regeneration has to be possible from the fetched checkout, which means
+    // the Makefile has to pass the destination at RUN TIME — the SDK's own
+    // model cannot describe being cloned in here.
+    test('the Makefile regenerates through the generate-time override',
+      async (t) => {
+        if (!outsideSupported) {
+          return t.skip('no `outside` support in the installed test kit')
+        }
+
+        const { outside } = await generateInto(consumer, {
+          model: consumerModel(consumer.sdk,
+            "main: kit: target: 'seneca-provider': output: path: '" + OUT + "'"),
+          outside: [OUT],
+        })
+
+        const mk = String(outside[OUT].Makefile || '')
+
+        ok(/^regen:/m.test(mk), 'no regen target:\n' + mk.slice(-500))
+        ok(mk.includes('SDKGEN_EXTERNAL'),
+          'regen does not pass the destination at generate time')
+        ok(mk.includes('"enclosing":true'),
+          'regen does not ask for the enclosing layout, which is refused by default')
+      })
+
   })
 
 

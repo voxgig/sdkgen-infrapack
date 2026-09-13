@@ -1,6 +1,6 @@
 {
   "name": "@voxgig/sdkgen-infrapack",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "Infrastructure-provider targets for the Voxgig SDK Generator: Seneca provider.",
   "type": "commonjs",
   "license": "MIT",
@@ -85,11 +85,11 @@
   ],
   "peerDependencies": {
     "@voxgig/apidef": ">=8.4.0",
-    "@voxgig/sdkgen": ">=4.12.0"
+    "@voxgig/sdkgen": ">=4.16.0"
   },
   "devDependencies": {
     "@voxgig/apidef": ">=8.4.0",
-    "@voxgig/sdkgen": ">=4.12.0",
+    "@voxgig/sdkgen": ">=4.16.0",
     "aontu": ">=0.52",
     "memfs": "4.68.1",
     "typescript": "7.0.2",

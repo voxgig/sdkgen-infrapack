@@ -20,6 +20,8 @@
 // The content below is the template's, byte for byte. It carried no
 // placeholder, so nothing about `stdrep` substitution changes by moving it.
 
+import { SDK_SRC_DIR } from './Extras_seneca-provider'
+
 import {
   Content,
   File,
@@ -151,6 +153,13 @@ test/local-env.js
 # every regeneration leaves the provider repo dirty with hundreds of
 # untracked files.
 .jostraca/
+
+# The SDK source, fetched by \`make sdk-src\` at the repository and tag in
+# sdk-pin.json. DERIVED and disposable: the pin is the committed fact, and
+# the checkout can be refetched from it at any time. Committing it would
+# vendor the whole SDK into a repo that already depends on its published
+# package.
+${SDK_SRC_DIR}/
 `)
   })
 })
