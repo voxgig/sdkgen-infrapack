@@ -6,45 +6,11 @@ import {
 } from '@voxgig/sdkgen'
 
 
-// The rest of the seneca-provider package: its test suite, CI workflow and
-// README. Split out of Main only for size — everything here is driven by the
-// same `provider` shape Main builds from the model.
-//
-// The tests are the reason this target is worth generating at all. A provider
-// is thin, and the thin part is exactly where the mistakes are: a cmd that
-// forgets a parent path param, an entity that comes back under the wrong
-// canon, a 404 that should have been `null` and instead threw. All three are
-// checked below, offline, against the SDK's own mock transport — so a
-// generated provider is verified without a server.
 
 
-// WHERE A FETCHED SDK CHECKOUT LIVES, inside this repo.
-//
-// Fixed, and the same under every layout, which is the whole point: it is
-// what lets the generated docs, the live-test instructions and `make regen`
-// name the SDK source without naming anyone's directory layout. Gitignored —
-// the checkout is derived from the pin and disposable, so committing it would
-// vendor the SDK into a repo that already depends on it.
-//
-// NOT a git submodule. A submodule pins a COMMIT and puts the pin in git's
-// own plumbing, where updating it is a second repository operation and a
-// stale one is invisible in a normal diff. The pin here is an ordinary
-// committed file naming a TAG, regenerated from the model like everything
-// else, so it moves with the SDK version it belongs to and shows up in review.
 const SDK_SRC_DIR = '.sdksrc'
 
 
-// The SDK this provider was generated from: repository, release tag, and the
-// published package the tag corresponds to.
-//
-// Committed, and REGENERATED — so it cannot drift from the dependency in
-// package.json, which comes from the same model version. The tag is
-// `v<version>` because that is what the SDK's publish workflow cuts for its
-// primary npm target.
-//
-// This is the file that makes the repo independently buildable: with it, the
-// SDK that generates this provider can be fetched from scratch, at the exact
-// revision that generated it, by a script that knows nothing else.
 const SdkPin = cmp(function SdkPin(props: any) {
   const { provider } = props
 
@@ -73,37 +39,15 @@ const SdkPin = cmp(function SdkPin(props: any) {
 // Does this entity's load op have a real identifying param (path or
 // required query), e.g. GET /result?trace_id=? A paramless GET has none.
 function loadHasKey(e: any): boolean {
-  // FROM WHAT THE HANDLER ACTUALLY SENDS (Main's addressKeys), not from the
-  // route's shape. A route can carry parameters and still be a singleton
-  // read: github's `interaction` is `/user/interaction-limits`, and its
-  // sibling `webhook_config` reads one config per app — both are called as
-  // `load({})`, so every id hits the same record and a not-found test
-  // against them asserts the opposite of the truth. Asking the route
-  // whether it has any parameter said yes for both.
   return true === (e.idaddressed || {}).load
 }
 
 
-// CAN A REMOVE DELETE WHAT A CREATE JUST MADE? A round-trip that ends by
-// asserting the record is gone needs one that can address it.
-//
-// github's `action` is a tag bucket whose ops address different resources:
-// keyed `archive_format` from its download route, removed by
-// `hosted_runner_id` and `org_id`. The remove therefore deleted whichever
-// record the store yielded first — usually a SEEDED one — and the round-trip
-// failed on its own record surviving, intermittently, because the created
-// id is random and its position in iteration order decides.
 function removeAddresses(e: any): boolean {
   return true === (e.idaddressed || {}).remove
 }
 
 
-// WOULD THIS CMD REFUSE? A cmd whose only route addresses a different
-// resource does not send the request (Main's `misaddressed`), so a test that
-// drives it reaches the refusal and nothing beyond — a parent-key guard, a
-// round-trip's update leg, a plain-save assertion. Each such test is skipped
-// here and the refusal is pinned by its own `<entity>-<cmd>-refused`.
-// What a refusing cmd's route DOES address, for the message and the note.
 function addressNames(e: any, cmd: string): string[] {
   const keys = (e.opParents || {})[cmd] || []
   return 0 < keys.length ? keys : ['nothing more specific']
@@ -115,13 +59,6 @@ function cmdRefuses(e: any, cmd: string): boolean {
 }
 
 
-// The name of the entity a parent path param addresses, or '' when the model
-// has none of that name.
-//
-// From `e.parentOf`, which Main derives PER KEY. `e.parentEntity` describes
-// only the FIRST parent, so an entity nested two levels deep had every one of
-// its parents resolved to the innermost one — addressing the wrong record, or
-// none.
 function parentName(e: any, key: string): string {
   const byKey = (e.parentOf || {})[key]
   if (null != byKey && '' !== byKey) {
@@ -143,16 +80,6 @@ function parentSeed(e: any, key: string): string {
 }
 
 
-// `key: 'value', ` pairs for an entity's parent path params, ready to splice
-// into an object literal. Empty for a top-level entity, so the same emitter
-// serves both.
-//
-// OFFLINE the value is the seeded parent id, which exists because the seed put
-// it there. LIVE it is a local VARIABLE, emitted as ES shorthand: a real server
-// holds whatever records it holds, and a fixture id written into a live test is
-// a 404 waiting to happen. That is not hypothetical — seeding the live nested
-// create is exactly how the first version of this failed, with
-// `create: request: 404` against a parent that only ever existed in the mock.
 function parentPairs(e: any, live: boolean): string {
   return e.parents
     .map((p: string) => live ? `${p}, ` : `${p}: '${parentSeed(e, p)}', `)
@@ -185,13 +112,6 @@ function entIdLiteral(e: any, suffix: string): string {
   const vals = parts.map((p: string) =>
     e.parents.includes(p) ? parentSeed(e, p) : `${e.name}${suffix}`)
 
-  // THE SUFFIX MUST SURVIVE, or `-nosuch` names the record that exists.
-  //
-  // A part that is also a parent key takes the parent's seeded value, which
-  // ignores the suffix — and for github's repo BOTH parts are parent keys,
-  // so `entIdLiteral(e, '-nosuch')` returned `owner0/repo0`. The not-found
-  // test then loaded the seeded record and asserted it was null. The last
-  // part is the record's own key, so that is where the suffix belongs.
   if ('' !== suffix && !vals.some((v: string) => v.endsWith(suffix))) {
     vals[vals.length - 1] = vals[vals.length - 1] + suffix
   }
@@ -239,12 +159,6 @@ function queryPairs(e: any, live: boolean): string {
     return parentPairs(e, live)
   }
 
-  // ONLY THE PARTS TRAVEL INSIDE THE ID. A required key that is not one of
-  // them still has to be passed, and dropping every parent because SOME of
-  // them are parts left github's api_insights_summary_stat — keyed
-  // `actor_type/actor_id`, and requiring a `min_timestamp` besides — called
-  // without the timestamp its own handler guards. Its three read tests
-  // failed on the guard rather than on anything they were written to check.
   const rest = e.parents.filter((p: string) => !parts.includes(p))
 
   return rest
@@ -253,50 +167,12 @@ function queryPairs(e: any, live: boolean): string {
 }
 
 
-// CAN A CREATED RECORD'S COMPOSITE ID BE REBUILT? Only if every part is
-// recoverable, and for a composite entity that is not a given.
-//
-// A create supplies the parts one of two ways: as path parameters of the
-// create route, or in the response. github's repo has NEITHER for its
-// `repo` part — `POST /user/repos` takes no path parameters, and the
-// response names the repository `name`, never `repo`. So there is no honest
-// way to know the id of a repo the API just made, and a create/update/remove
-// round-trip cannot be written against it.
-//
-// THIS IS A MODEL GAP, NOT A TEST TO FORCE. What is missing is a mapping
-// from a path parameter to the response field that carries it (`repo` ->
-// `name`); apidef knows the parameter and the field but nothing relates
-// them. Emitting the round-trip anyway produced a 404 on the update leg that
-// pointed at the mock rather than at the cause, so the honest thing is to
-// leave it out and say why in the generated file.
-//
-// load, load-missing and the malformed-id test are all still emitted: those
-// address an existing record, where the id comes from the caller.
 function compositeRoundTrip(e: any): boolean {
   const parts = idPartsOf(e)
   if (0 === parts.length) {
     return true
   }
 
-  // EVERY PART PLACED, AND PLACED AT THE TOP LEVEL.
-  //
-  // Placed at all: the model must say where a response carries the part, or a
-  // created record's id cannot be rebuilt by anything.
-  //
-  // Top level: only for the OFFLINE round-trip, and only because of how this
-  // transport matches a write. It takes the keys it matches on from the
-  // request BODY, and a write's addressing parameters no longer travel there
-  // — they go in the entity match, which is what stopped them displacing a
-  // nested response field. So an update finds nothing to pin the record by.
-  //
-  // Widening the transport's key set to the point's required parameters was
-  // tried and over-constrains reads: PullEntity's basic load began matching
-  // on a parameter it had never constrained, and answered 404. The proper
-  // fix is for the transport to take a write's addressing keys from the
-  // resolved path parameters specifically, which is a change to shared
-  // machinery that wants its own validation pass.
-  //
-  // Reads, lists and removes round-trip through a nested part today.
   const from = e.idfrom || {}
   return parts.every((p: string) => {
     const path = from[p]
@@ -327,18 +203,6 @@ function liveParentsResolvable(provider: any, e: any): boolean {
 }
 
 
-// A DECLARED identifier derived from an entity name.
-//
-// apidef canonizes an entity name to `[A-Za-z_0-9]` — `canonize` strips
-// everything else, so hyphens and dots never reach the model and `a-b` and
-// `a_b` arrive as the same `a_b`. The one shape that survives and is NOT a
-// legal identifier is a LEADING DIGIT, which real resources produce:
-// `3ds-sessions` canonizes to `3ds_session`, `2fa-tokens` to `2fa_token`.
-//
-// A DECLARATION cannot be bracket-quoted the way a property access can — the
-// same constraint `guardName` in Main documents — so it is prefixed instead.
-// Only a leading digit is touched, so every ordinary entity keeps the name it
-// has always generated.
 function entVar(name: string, suffix = ''): string {
   return /^[0-9]/.test(name) ? `e_${name}${suffix}` : `${name}${suffix}`
 }
@@ -384,19 +248,6 @@ function mutableField(e: any): string {
 }
 
 
-// A create -> load -> update -> remove round-trip for one entity.
-//
-// Emitted for any entity declaring BOTH save and remove, in both modes: once
-// offline against the SDK's mock transport, once live behind the server probe.
-// The write path is where a provider actually breaks — a save that forgets a
-// parent key, an update that creates a second record instead of amending the
-// first — and it was covered by nothing until this existed. The hand-written
-// provider this target was modelled on had exactly these tests, live; dropping
-// them on the first regeneration left every cmd.save and cmd.remove action in
-// the generated plugin unexecuted by its own suite.
-//
-// The created id is never asserted to a VALUE: both the mock and a real API
-// assign it themselves and ignore any the SDK sends.
 function crudTest(provider: any, e: any, mode: 'offline' | 'live'): string {
   const live = 'live' === mode
   const pairs = parentPairs(e, live)
@@ -417,29 +268,9 @@ function crudTest(provider: any, e: any, mode: 'offline' | 'live'): string {
     f.name !== idf && 'id' !== f.name && !e.parents.includes(f.name)).length ?
     seedLiteral(e, 'crud') : ''
 
-  // A COMPOSITE RECORD MUST BE CREATED IN THE SHAPE IT COMES BACK IN.
-  //
-  // The offline transport echoes what a create sent, so a create that sends
-  // its parts flat produces a record whose id cannot be read back — `from`
-  // looks for github's owner at `owner.login` and finds a bare string. The
-  // parts therefore go in at their `from` paths, appended AFTER the field
-  // literal so they win over the flat pair the seed emitted.
-  //
-  // The record key gets its own value rather than the seed's, so a created
-  // record is distinguishable from a seeded one in the same store.
   const idmake = 0 === idPartsOf(e).length ? '' :
     ', ' + idFromPairs(e, '-crud')
 
-  // NOT EVERY WRITABLE ENTITY IS READABLE. github's `app` declares create,
-  // update, remove and list — and no load at all, because the API offers no
-  // route that reads one app back. The round-trip read `ent.load$(...)` on
-  // nine such entities, got the null the provider correctly returns for a
-  // cmd it does not implement, and died on `loaded.id` — so the write path
-  // those tests existed to cover went unexercised.
-  //
-  // What can be checked still is: the update runs on the created entity
-  // itself, and the remove runs. What cannot be checked is stated in the
-  // file rather than quietly dropped.
   const hasLoad = e.cmds.includes('load')
 
   const body = hasLoad ? `${ind}  try {
@@ -507,12 +338,6 @@ ${body}${ind}})
 }
 
 
-// A source literal for one field, by kind.
-//
-// `$ARRAY` and `$OBJECT` are in the model's sentinel vocabulary and used to
-// fall through to the string branch, so a list field came out as
-// `tags: 'quick-tags'` — a type-incorrect body that a validating server
-// rejects, and a fixture that quietly stopped exercising non-scalar payloads.
 function fieldLiteral(f: any, tag: string): string {
   switch (f.kind) {
     case 'number': return '12345'
@@ -550,26 +375,10 @@ function seedRecord(e: any, idx: number): Record<string, any> {
     if (f.name === rkey) {
       out[f.name] = `${e.name}${idx}`
     }
-    // AN `id` THAT IS NOT THE ADDRESSING KEY IS SEEDED DISTINCTLY. Seeding
-    // both the same value made the offline suite unable to tell a provider
-    // that addresses records correctly from one that confuses the API's own
-    // `id` with the key its routes take — the seed agreed with either. Real
-    // GitHub never returns that: a pull has a global database `id` AND a
-    // repo-scoped `number`, and they differ.
     else if ('id' === f.name) {
       out[f.name] = `${e.name}-apiid-${idx}`
     }
     else if (e.parents.includes(f.name)) {
-      // A nested entity's parent id must match a record the parent seeds, or
-      // the offline store answers nothing and every nested test reads as a
-      // false pass. Reuses parentSeed's fallback rather than f.parentEntity
-      // directly: when no entity in the model shares this key's name (the
-      // common case for a scoping param like `user_id` with no `user`
-      // entity, or a same-named response field that means something else
-      // entirely, like GitHub's `owner`), f.parentEntity is '' and seeding
-      // '0' desynced the record from every query built against the SAME
-      // key via parentSeed (parentPairs, crudTest, ...) — 0 results, or a
-      // seeded field asserted against the wrong literal.
       out[f.name] = parentSeed(e, f.name)
     }
     else if ('number' === f.kind) {
@@ -589,39 +398,12 @@ function seedRecord(e: any, idx: number): Record<string, any> {
     }
   }
 
-  // THE ADDRESSING KEY IS ALWAYS PRESENT, even when the response schema has
-  // no field of that name.
-  //
-  // The offline transport is a store, and it can only answer a request by
-  // matching the request's own parameters against a stored record
-  // (TestFeature.buildArgs). github reads an org's artifact retention from
-  // `/orgs/{org}/actions/permissions/artifact-and-log-retention`, whose body
-  // is `{days, maximum_allowed_days}` — no org anywhere in it. The loop
-  // above stamps the key only onto a field that already exists, so such a
-  // record was seeded with nothing the provider addresses it by, every
-  // offline load of it answered 404, and forty-one generated tests failed on
-  // a null they could not have avoided.
-  //
-  // This is a property of the mock, not a claim about the API: a real
-  // response need not echo the path parameter that selected it, which is
-  // why the handler carries the request's own values across into the id
-  // rather than reading them back off the body.
   if ('' !== String(rkey) && null == out[rkey] &&
     0 === (Array.isArray(e.idparts) ? e.idparts.length : 0)) {
     out[rkey] = e.parents.includes(rkey) ?
       parentSeed(e, rkey) : `${e.name}${idx}`
   }
 
-  // THE SEED MODELS THE REAL RESPONSE, through the same `from` mapping the
-  // runtime reads. github's repo owner goes to `owner.login` and its name to
-  // `name`, because that is where the API puts them — so a record the mock
-  // returns is identifiable by exactly the code that identifies a real one.
-  //
-  // This only works because the offline transport now matches a request
-  // parameter against `id.from` as well as against its own name
-  // (TestFeature.buildArgs). Seeding this shape before that landed made
-  // every composite record unfindable: the mock looked for a field called
-  // `owner` and found an object.
   seedIdParts(e, out, idx)
 
   return out
@@ -706,10 +488,6 @@ module.exports = { SEED }
     })
 
 
-    // The message-level spec seneca-msg-test drives. TypeScript, compiled to
-    // dist-test by test/tsconfig.json — which is also why it must exist: the
-    // shipped tsconfig has `include: ["**/*.ts"]` and tsc fails outright on a
-    // config that matches no input.
     File({ name: 'basic.messages.ts' }, () => {
       Content(`/* Generated by @voxgig/sdkgen. Do not edit. */
 
@@ -803,12 +581,6 @@ describe('${provider.fileBase}', () => {
 
 `)
 
-      // Every flat entity (no parent keys), not just one "subject" — a
-      // provider with two or more flat siblings used to leave every one
-      // but the busiest untested beyond the accessor check above. A bare
-      // `list$()`/`load$(id)` call has no way to carry a parent key, so
-      // entities that need one are covered by the `nested` block below
-      // instead, with their keys filled in.
       const flat = provider.entities.filter((e: any) => 0 === e.parents.length)
 
       each(flat, (e: any) => {
@@ -873,13 +645,6 @@ describe('${provider.fileBase}', () => {
       // A nested entity cannot build its path without the parent id. That is
       // the mistake this target exists to make impossible, so pin it.
       each(nested, (e: any) => {
-        // A COMPOSITE-KEY ENTITY HAS NO SEPARATE PARENT GUARD to pin: its
-        // parents travel inside the id, so `need_<e>_<parent>` is not
-        // emitted and there is nothing that could throw "<parent> is
-        // required". What replaces it is a malformed id, which splitid_<e>
-        // refuses by name — so pin THAT instead, and keep the property the
-        // original test was defending: an incomplete address never reaches
-        // the API.
         if (0 < idPartsOf(e).length) {
           const sep = null != e.idsep && '' !== String(e.idsep) ? String(e.idsep) : '/'
           const shape = idPartsOf(e).join(sep)
@@ -893,11 +658,6 @@ describe('${provider.fileBase}', () => {
             e.cmds.includes('remove' === op ? 'remove' : 'load' === op ? 'load' : 'save'))
 
           if (null != cmd) {
-            // THE OTHER REQUIRED KEYS STILL TRAVEL. A composite id carries
-            // the parts and nothing else, so an entity that also requires a
-            // plain query key — github's api_insights_summary_stat needs a
-            // `min_timestamp` besides its `actor_type/actor_id` — tripped
-            // that guard first and this test asserted the wrong refusal.
             const rest = queryPairs(e, false)
             const call = 'remove' === cmd ?
               `remove$({ ${rest}id: 'incomplete' })` :
@@ -920,23 +680,10 @@ describe('${provider.fileBase}', () => {
           }
         }
 
-        // EVERY parent key, not just the first. An entity nested two levels
-        // deep is guarded on both, so a test supplying only the alphabetically
-        // first tripped the second guard and failed on the code it was meant
-        // to be exercising.
         const key = e.parents[0]
         const pairs = e.parents
           .map((k: string) => `${k}: '${parentSeed(e, k)}'`).join(', ')
 
-        // The guard is PER OP (Main's opParents), not a blanket property of
-        // the entity, so the op this test calls has to be one that actually
-        // requires `key` — hardcoding `list` assumed every nested entity's
-        // list is parent-scoped, which fails for e.g. an entity guarded on
-        // load/update/remove but whose list is unscoped (GitHub's `repo`:
-        // owner guards load, not list).
-        // AND NOT A CMD THAT REFUSES. A refusing cmd emits no guards at all
-        // — the refusal replaces them — so a test driving it asserted a
-        // "<key> is required" message that no longer exists.
         const guardOp = ['list', 'load', 'update', 'remove']
           .find((op: string) => (e.opParents[op] || []).includes(key) &&
             !cmdRefuses(e, op))
@@ -945,12 +692,6 @@ describe('${provider.fileBase}', () => {
         // trip, because the parents live inside the id. needs-full-id above
         // is what pins the same property for those entities.
         if (null != guardOp && 0 === idPartsOf(e).length) {
-          // SENECA HAS NO `update$`. The entity cmds are load$/save$/list$/
-          // remove$, and an update is a `save$` on an entity that CARRIES an
-          // id — that is the whole convention this provider is built on.
-          // Emitting `update$({id})` produced eight tests that failed with
-          // "update$ is not a function", so they asserted nothing about the
-          // guard they were written for.
           const call =
             'list' === guardOp ? `${guardOp}$({})` :
               'update' === guardOp ?
@@ -970,12 +711,6 @@ describe('${provider.fileBase}', () => {
 `)
         }
         if (e.cmds.includes('list')) {
-          // Assert on the SEEDED RECORDS, not merely that an array came back.
-          // `Array.isArray` is true of the empty array, so the nested-list
-          // test passed while proving nothing: the seed puts both of this
-          // entity's records under the same parent, so both must come back,
-          // under this plugin's canon, still carrying the parent key that
-          // addressed them.
           Content(`
   it('${e.name}-list', async () => {
     const seneca = await makeSeneca()
@@ -1094,12 +829,6 @@ ${!loadHasKey(e) ? '' : `
       })
 
 
-      // THE REFUSAL. A cmd whose only route addresses a different resource
-      // must not send the request — `migration`'s remove would delete a
-      // repository's migration archive, `user`'s a GPG key, `pull`'s a
-      // review comment, with the caller's id dropped and a successful reply.
-      // That is the worst possible answer, so it is refused, and refused
-      // BY NAME: the message says which key the route does not take.
       each(provider.entities, (e: any) => {
         for (const cmd of ['remove', 'update']) {
           if (true !== (e.idmisaddressed || {})[cmd]) {
@@ -1127,18 +856,6 @@ ${!loadHasKey(e) ? '' : `
       })
 
 
-      // ACTIONS — the `action$` directive.
-      //
-      // The test that matters most is the NEGATIVE one. A name this entity
-      // does not have must throw, because the alternative is that the plugin
-      // ignores the key and performs an ordinary save: a call that succeeds,
-      // reports success, and did something else. That is exactly how GitHub's
-      // `merge` reached its provider as an "update" — the endpoint existed,
-      // the plugin had no way to name it, and nothing said so.
-      //
-      // Generated for EVERY entity, whether it has actions or not: an entity
-      // with none is the case most likely to be typed at by mistake, and its
-      // error is the one that names the empty set.
       each(provider.entities, (e: any) => {
         const pairs = parentPairs(e, false)
         const acts = e.actionList.filter((a: any) => 'save' === a.cmd)
@@ -1175,22 +892,6 @@ ${!loadHasKey(e) ? '' : `
 `)
         }
 
-        // THE SILENT-DROP PIN. A save with no `action$` must still take the
-        // canonical route: the whole mechanism is worthless if adding it
-        // changed what an ordinary call does, and this is the assertion that
-        // would fail if the action branch ever ran unconditionally.
-        //
-        // GATED ON THE ENTITY BEING ABLE TO PERFORM ONE, which is three
-        // separate facts and was none of them. The test loads a record, edits
-        // it and saves it back, so it needs a `load` cmd to fetch with, a
-        // canonical `update` route to save to — an entity whose only update
-        // point is the action has no plain save at all — and a mutable field
-        // to change. Emitted without those it ships a red suite to a package
-        // whose action works perfectly, which is the worst kind of generated
-        // test: it fails for a reason that is not about the code it names.
-        //
-        // The ACTION tests below are not gated on any of this. They are what
-        // this entity does have.
         const canPlainSave = e.cmds.includes('load') &&
           e.canonicalOps.includes('update') &&
           !cmdRefuses(e, 'update')
@@ -1219,23 +920,6 @@ ${!loadHasKey(e) ? '' : `
 `)
           }
 
-          // And the POSITIVE case: a name the entity DOES have is accepted
-          // and dispatched. `directive$` rather than `make$({ action$ })`
-          // because make$ drops an unknown trailing-`$` key before any store
-          // sees it — see the README's Actions section.
-          //
-          // WHAT THIS DOES NOT ASSERT, and why. The offline mock answers by
-          // matching a seeded record against the parameters of the point the
-          // SDK chose, and the seed is built for the CANONICAL route — an
-          // action route with parameters of its own has nothing seeded to
-          // match, so the mock's honest answer is a 404. Asserting a returned
-          // record here would mean generating a test that fails for every API
-          // whose actions are not shaped like its CRUD.
-          //
-          // The provider's own responsibility is to accept the name and route
-          // it. That is what is asserted: whatever comes back, it is not this
-          // plugin refusing the action. Paired with the unknown-action test
-          // above, the two together say the map holds exactly the right names.
           const act = acts[0]
           Content(`
   // \`${act.action}\` is an action of \`${act.op}\`: ${act.path}
@@ -1311,15 +995,6 @@ ${!loadHasKey(e) ? '' : `
 `)
         }
 
-        // The write path against a REAL server. The mock answers the shape the
-        // SDK expects by construction; only a live run proves the request the
-        // provider builds is one the API actually accepts — which for a nested
-        // entity means the parent id reached the URL rather than the body.
-        //
-        // Emitted only when a live parent id is OBTAINABLE (see
-        // liveParentsResolvable): against a real server the parent has to be
-        // looked up, and an entity whose parent cannot be listed offers no
-        // honest way to get one.
         each(provider.entities, (e: any) => {
           if (e.cmds.includes('save') && e.cmds.includes('remove') &&
             liveParentsResolvable(provider, e) && compositeRoundTrip(e)) {
@@ -1332,10 +1007,6 @@ ${!loadHasKey(e) ? '' : `
 `)
       }
 
-      // Repository hygiene, from the @seneca/maintain dependency this package
-      // declares. Two of its checks report a fault that is not there, because
-      // of WHERE they run rather than what they find, so each is excluded
-      // only in the environments that break it.
       Content(`
   it('maintain', async () => {
     const exclude = []
@@ -1430,13 +1101,6 @@ async function makeSeneca(pluginopts) {
 })
 
 
-// --- test/live.js, test/quick.js --------------------------------------------
-//
-// Manual scripts, not part of `npm test`: they need the companion server in
-// the SDK repo's `app/`, which is not published. Generated because the path
-// to that server is knowable — it is the inverse of this target's own
-// `output: path` — so the instruction can be exact rather than "start the
-// server somehow".
 
 const Scripts = cmp(function Scripts(props: any) {
   const { provider } = props
@@ -1601,16 +1265,6 @@ async function run() {
 `)
         }
 
-        // The NESTED write, which is the leg worth having a manual script
-        // for: it is the one where the parent id has to reach the URL rather
-        // than the body, and where a provider that forgets it reports an
-        // opaque 404 instead of saying what is missing.
-        //
-        // Only for a child of the record just created — then the parent id is
-        // `id`, already in hand, and removing the child leaves the server
-        // exactly as found. A child of anything else would need its own
-        // lookup, which belongs in the test suite rather than in a script
-        // whose whole point is to be readable.
         const child = provider.entities.find((e: any) =>
           1 === e.parents.length &&
           e.parentEntity === subject.name &&
@@ -1663,7 +1317,6 @@ async function run() {
 })
 
 
-// --- .github/workflows/build.yml --------------------------------------------
 
 const Workflow = cmp(function Workflow(props: any) {
   const { provider } = props
@@ -1776,27 +1429,6 @@ ${!provider.liveApp ? '' : `
 `)
       })
 
-      // --- publish.yml ---------------------------------------------------
-      //
-      // Release on a `v*` tag push, via GitHub OIDC Trusted Publishing — no
-      // NPM_TOKEN secret anywhere. `id-token: write` lets npm exchange a
-      // GitHub OIDC token for a short-lived publish credential, and npm
-      // attaches provenance automatically.
-      //
-      // TWO THINGS ARE LOAD-BEARING AND EASY TO GET WRONG.
-      //
-      // The FILENAME. npm's trusted publisher is registered against this
-      // file's name, so renaming it breaks publishing until the npm-side
-      // configuration is changed to match. It is publish.yml deliberately.
-      //
-      // `npm install`, NOT `npm ci`. A Seneca plugin does not commit its
-      // lockfile (see .gitignore), so there is nothing for ci to install
-      // from — it fails outright. The SDK repo commits one and uses ci; this
-      // package cannot.
-      //
-      // The host framework is installed explicitly for the same reason
-      // build.yml does it: seneca and its plugins are PEER dependencies, and
-      // the test suite requires them directly.
       File({ name: 'publish.yml' }, () => {
         Content(`# Generated by @voxgig/sdkgen. Do not edit.
 #
@@ -1957,13 +1589,6 @@ jobs:
 })
 
 
-// --- README.md ---------------------------------------------------------------
-//
-// The heading set is NOT free: @seneca/maintain checks a Seneca plugin README
-// for "Quick Example", "More Examples", "Motivation", "Support", "API",
-// "Contributing" and "Background", and the generated `maintain` test fails
-// without them. That check is the reason to generate this file rather than
-// leave it to a maintainer.
 
 const Readme = cmp(function Readme(props: any) {
   const { provider } = props
@@ -2044,16 +1669,6 @@ await seneca.ready()
 `)
     }
     if (subject.cmds.includes('load')) {
-      // THE FIRST RUNNABLE EXAMPLE HAS TO RUN. `load$('some-id')` passes a
-      // bare id and nothing else, but the generated handler calls
-      // `need_<entity>_<parent>()` on every parent key before it reaches the
-      // SDK — so for any entity that has one, the README's opening example
-      // threw `<entity> load: <parent> is required`. Show the object form
-      // with the parent keys the handler actually enforces; the bare-string
-      // form stays for a parentless entity, where it is correct and shorter.
-      // A COMPOSITE KEY IS ONE STRING, not a bag of keys. Its parents travel
-      // inside the id, so the object form with them alongside is the shape
-      // its own handler rejects — the example has to show the joined id.
       const cparts = idPartsOf(subject)
       const loadArg = 0 < cparts.length ?
         `'${cparts.map((p: string) => 'some-' + p).join(
@@ -2099,9 +1714,6 @@ Each API entity is exposed as a Seneca entity under
 | Seneca entity | Commands | Fields |
 | --- | --- | --- |
 `)
-    // Fields as well as commands: a reader deciding whether this plugin
-    // covers what they need has to know what a record CONTAINS, and the
-    // table used to answer only half the question.
     each(provider.entities, (e: any) => {
       const fields = 0 === e.fields.length ? '—' :
         e.fields.map((f: any) => '`' + f.name + '`').join(', ')
@@ -2124,18 +1736,6 @@ missing key, rather than failing as an opaque 404 from a half-built URL.
       })
     }
 
-    // CUSTOM ACTIONS.
-    //
-    // apidef folds a non-CRUD verb into an ordinary op as an alternative
-    // point, and the SDK reaches it with `$action` in the call's argument.
-    // The `ts` target documents this in its own REFERENCE.md and the same
-    // treatment belongs here, because the Seneca spelling is DIFFERENT
-    // (`action$`, trailing dollar, Seneca's directive convention) and a
-    // reader who has only ever seen the SDK's would guess wrong.
-    //
-    // Undocumented, this is the state the plugin was in before: a GitHub
-    // provider with a `pull` entity and no way to merge a pull request at
-    // all, because nothing anywhere said the endpoint existed.
     const acting = provider.entities.filter((e: any) => 0 < e.actionList.length)
 
     if (0 < acting.length) {
@@ -2337,33 +1937,6 @@ ${provider.api} API definition, against the
 })
 
 
-// --- doc/tutorial.md ---------------------------------------------------------
-//
-// The Diataxis TUTORIAL: an empty folder to a working script in about fifteen
-// minutes. It teaches, so it is deliberately narrower than the other three
-// documents — one path, no alternatives, and no decisions asked of the
-// reader.
-//
-// Two decisions shape this component.
-//
-// FIRST, a tutorial must never ask the reader to invent a value. Every id in
-// the script is therefore either seeded here (offline) or read back from a
-// list call (live) — never a literal that only happens to exist on the
-// author's machine. That is also why a declared server is not by itself
-// enough to choose the live lesson: the primary entity must be listable, and
-// a nested primary entity must have a listable parent, or there is no honest
-// way to come by the first id. Failing that the offline lesson runs, which is
-// a complete tutorial in its own right rather than an apology for a missing
-// server.
-//
-// SECOND, the step numbers are computed rather than written, because which
-// steps exist depends on which cmds the model declares. `step()` counts as it
-// emits, and the prose refers to what a step did rather than to a number that
-// may not be there.
-//
-// The offline seed reuses seedRecord() — the same function behind
-// test/seed.js — so what the reader is told to paste has the shape the SDK
-// really answers with.
 
 const DocTutorial = cmp(function DocTutorial(props: any) {
   const { provider } = props
@@ -3030,21 +2603,6 @@ the way you saw:
 })
 
 
-// --- doc/how-to.md ----------------------------------------------------------
-//
-// The task-oriented quadrant of the Diataxis set: one problem per section, for
-// a reader who already has the plugin loaded. It instructs and does not
-// explain — anything that starts justifying a design choice belongs in
-// explanation.md and is linked to instead.
-//
-// Two decisions worth naming. First, the section list is built as data before
-// anything is emitted, so the table of contents and the sections themselves
-// are produced from the SAME guards and cannot drift: a recipe that is
-// suppressed because no entity declares the cmd also loses its TOC entry.
-// Second, every example id is the one `seedRecord` gives that entity, so the
-// examples here and the seed in test/seed.js agree — the offline recipe can
-// then be copied verbatim and the ids used in every other recipe will
-// actually resolve.
 
 const DocHowto = cmp(function DocHowto(props: any) {
   const { provider } = props
@@ -3101,13 +2659,6 @@ const DocHowto = cmp(function DocHowto(props: any) {
 
   const key = (k: string) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k) ? k : `'${k}'`
 
-  // SERIALISE, DO NOT COERCE. `String(value)` renders an object as
-  // `[object Object]` and an empty array as the empty string, so a field of
-  // either kind turned the documented create recipe into a syntax error
-  // (`code_of_conduct: [object Object]`, `labels: ,`). Every value a seed
-  // record can hold — string, number, boolean, array, plain object — now
-  // emits as the JS literal it claims to be, recursively, so a reader can
-  // copy the block and run it.
   const jsval = (v: any): string => {
     if (null === v || undefined === v) {
       return 'null'
@@ -3711,25 +3262,6 @@ ${s.body}
 })
 
 
-// --- doc/reference.md ---------------------------------------------------------
-//
-// The Diátaxis reference: information-oriented, complete, and never teaching.
-// Everything a caller can reach — options, canons, fields, patterns, exports,
-// errors, environment variables, scripts — stated once, in tables, with the
-// exact strings the generated source actually emits.
-//
-// Three facts here are easy to get wrong by copying a hand-written original.
-// The guard message carries the PUBLISHED package name, because that is what
-// Main interpolates (`${provider.pkgName}: <entity> <cmd>: <key> is required`).
-// The `sdk` block of the get:info response carries the SDK's PACKAGE name, not
-// its slug. And an entity whose id field is not literally `id` cannot be read
-// with the `load$('x')` short form at all — Seneca turns that into `{id: 'x'}`,
-// which the generated action does not look at — so the object form is
-// documented for those entities instead of the string form.
-//
-// Nothing here assumes CRUD: every table row is conditional on the cmds and
-// ops the model actually declares, so an API offering only create, or only
-// reads, documents only what it has.
 
 const DocReference = cmp(function DocReference(props: any) {
   const { provider } = props
@@ -3740,8 +3272,6 @@ const DocReference = cmp(function DocReference(props: any) {
   // has nothing to select here.
   const acting = provider.entities.filter((e: any) => 0 < e.actionList.length)
 
-  // The entity used for worked examples: the same choice the tests and README
-  // make, so all three documents show the same entity.
   const subject = [...provider.entities]
     .sort((a: any, b: any) =>
       (a.parents.length - b.parents.length) || (b.cmds.length - a.cmds.length))[0]
@@ -3760,8 +3290,6 @@ const DocReference = cmp(function DocReference(props: any) {
 
   const live = '' !== provider.liveBase
 
-  // test/quick.js is emitted only when the subject entity can be created and
-  // removed again — see the Scripts cmp — so only document it when it exists.
   const quick = live && subject.cmds.includes('save') && subject.cmds.includes('remove')
 
   const canon = (e: any) => `provider/${provider.lower}/${e.name}`
@@ -4450,28 +3978,10 @@ ${quick ? 'Both scripts target' : 'It targets'} \`$${provider.ENV}_TEST_BASE\`, 
 })
 
 
-// --- doc/explanation.md ------------------------------------------------------
-//
-// The understanding-oriented corner of the Diátaxis set: the document someone
-// opens when the plugin surprised them. It DISCUSSES and never instructs, so
-// nothing here is a step and nothing here is a table — those belong in
-// tutorial.md, how-to.md and reference.md.
-//
-// The hard part of generating this one is that its subject is design reasoning,
-// most of which is true of EVERY provider this target emits (the entityBuilder
-// convention, the four-cmds-to-five-ops join, the .data() hop, the 404
-// translation) and only some of which depends on the model (whether any entity
-// is nested, whether writes exist at all, whether the API declares a server).
-// So the invariant prose is written once and the model-dependent sections are
-// guarded — an API with no nesting gets no nesting section rather than a
-// section explaining that it has none.
 
 const DocExplanation = cmp(function DocExplanation(props: any) {
   const { provider } = props
 
-  // The entity used as the worked example throughout: fewest parent keys
-  // (nothing to arrange around it) and the most cmds. Same choice the Tests
-  // and Readme cmps make, so the documents agree on what they talk about.
   const subject = [...provider.entities]
     .sort((a: any, b: any) =>
       (a.parents.length - b.parents.length) || (b.cmds.length - a.cmds.length))[0]
@@ -4919,23 +4429,6 @@ order-dependent and then flaky.
 })
 
 
-// --- doc/ --------------------------------------------------------------------
-//
-// The Diátaxis documentation set: an index plus the four quadrants.
-//
-// WHY THIS IS GENERATED AT ALL. Every other sdkgen target emits a single
-// README, and for a language SDK that is the right amount: the SDK's real
-// reference is its types. A Seneca provider has no types a reader can browse —
-// its whole interface is message patterns and entity canons, which exist only
-// in prose. The provider this target was modelled on carried 1100 lines of
-// hand-written documentation for exactly that reason, and the first
-// regeneration left all of it orphaned: the README's link table was gone and
-// nothing emitted the files it had pointed at.
-//
-// Everything here is derived from the same `provider` shape the source and the
-// tests are built from, so the docs cannot describe an entity the plugin does
-// not expose, or a cmd it does not implement — the drift that makes
-// hand-written provider docs untrustworthy after the second API change.
 
 const DocIndex = cmp(function DocIndex(props: any) {
   const { provider } = props
@@ -4987,9 +4480,6 @@ components, where fixing it once fixes every provider.
 })
 
 
-// The whole `doc/` folder. One cmp so Main names the documentation once, and
-// so the folder is opened in a single place — the four quadrant components
-// emit a File each and know nothing about where they sit.
 const Docs = cmp(function Docs(props: any) {
   const { provider } = props
 
