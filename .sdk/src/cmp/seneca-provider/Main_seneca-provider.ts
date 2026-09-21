@@ -63,7 +63,7 @@ function canonicalOps(ent: any): string[] {
     const points: any[] = (op && op.points) || []
 
     return points.some((pt: any) =>
-      null == (pt && pt.select && pt.select['$action']))
+      null == (pt && pt.q && pt.q['$action']))
   })
 }
 
@@ -172,7 +172,7 @@ function recordKey(ent: any): string {
     }
 
     const canonical = op.points.filter((pt: any) =>
-      null == (pt && pt.select && pt.select['$action']))
+      null == (pt && pt.q && pt.q['$action']))
     const point = ownPoint(0 < canonical.length ? canonical : op.points)
     const vars = pointSegments(point)
       .filter((seg: any) => null != seg.var)
@@ -181,10 +181,10 @@ function recordKey(ent: any): string {
       return String(vars[vars.length - 1].var)
     }
 
-    const query = (point && point.args && point.args.query) || []
-    const reqdQuery = query.filter((q: any) => false !== q.reqd)
+    const query = (point && point.g && point.g.query) || []
+    const reqdQuery = query.filter((q: any) => false !== q.r)
     if (1 === reqdQuery.length) {
-      return String(reqdQuery[0].name)
+      return String(reqdQuery[0].n)
     }
   }
 
@@ -209,8 +209,8 @@ function opParentKeys(ent: any, opname: string): string[] {
   const seen = new Set<string>()
 
   for (const p of opParams(op)) {
-    const name = String((p as any).name)
-    if (false !== (p as any).reqd && name !== rk && name !== 'id') {
+    const name = String((p as any).n)
+    if (false !== (p as any).r && name !== rk && name !== 'id') {
       seen.add(name)
     }
   }
@@ -381,12 +381,12 @@ const Main = cmp(function Main(props: any) {
         actionList: entityActionList(ent),
         canonicalOps: canonicalOps(ent),
         fields: (() => {
-          const req = (ent.fields || [])
-            .filter((f: any) => false !== f.req)
+          const req = (Object.values(ent.fields || {}))
+            .filter((f: any) => false !== f.r)
             .map((f: any) => ({
-              name: f.name,
-              kind: fieldKind(f.type),
-              parentEntity: parentEntityOf(f.name, entityNames),
+              name: f.n,
+              kind: fieldKind(f.t),
+              parentEntity: parentEntityOf(f.n, entityNames),
             }))
 
           const have = new Set(req.map((f: any) => f.name))

@@ -75,52 +75,52 @@ main: kit: entity: planet: {
     title:  { name: "title",  kind: "field", type: "\`$STRING\`", required: true }
     radius: { name: "radius", kind: "field", type: "\`$NUMBER\`" }
   }
-  fields: [
-    { name: "id",     req: true,  type: "\`$STRING\`" }
-    { name: "radius", req: false, type: "\`$NUMBER\`" }
-    { name: "title",  req: true,  type: "\`$STRING\`" }
-  ]
+  fields: {
+    "id": { h: 'Id', n: "id",     r: true,  t: "\`$STRING\`" }
+    "radius": { h: 'Radius', n: "radius", r: false, t: "\`$NUMBER\`" }
+    "title": { h: 'Title', n: "title",  r: true,  t: "\`$STRING\`" }
+  }
   op: {
     list: { name: "list", points: [ {
-      args: {}, method: "GET", orig: "/planet", segments: [{ lit: "planet" }]
-      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+      g: {}, m: "GET", o: "/planet", s: [{ lit: "planet" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
     load: { name: "load", points: [ {
-      args: { params: [
-        { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "p01" }
+      g: { params: [
+        { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "p01" }
       ] }
-      method: "GET", orig: "/planet/{id}", segments: [{ lit: "planet" }, { var: "id" }]
-      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+      m: "GET", o: "/planet/{id}", s: [{ lit: "planet" }, { var: "id" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
     create: { name: "create", points: [ {
-      args: { body: [ { kind: "body", name: "title", reqd: true, type: "\`$STRING\`" } ] }
-      method: "POST", orig: "/planet", segments: [{ lit: "planet" }]
-      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+      g: { body: [ { k: "body", n: "title", r: true, t: "\`$STRING\`" } ] }
+      m: "POST", o: "/planet", s: [{ lit: "planet" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
     update: { name: "update", points: [ {
-      args: {
-        params: [ { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "p01" } ]
-        body: [ { kind: "body", name: "title", type: "\`$STRING\`" } ]
+      g: {
+        params: [ { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "p01" } ]
+        body: [ { k: "body", n: "title", r: false, t: "\`$STRING\`" } ]
       }
-      method: "PATCH", orig: "/planet/{id}", segments: [{ lit: "planet" }, { var: "id" }]
-      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+      m: "PATCH", o: "/planet/{id}", s: [{ lit: "planet" }, { var: "id" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
     remove: { name: "remove", points: [ {
-      args: { params: [
-        { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "p01" }
+      g: { params: [
+        { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "p01" }
       ] }
-      method: "DELETE", orig: "/planet/{id}", segments: [{ lit: "planet" }, { var: "id" }]
-      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+      m: "DELETE", o: "/planet/{id}", s: [{ lit: "planet" }, { var: "id" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
   }
 }
 
 main: kit: flow: BasicPlanetFlow: {
   entity: "planet", kind: "basic", name: "BasicPlanetFlow"
   step: [
-    { op: "create", input: { ref: "planet_ref01" } }
-    { op: "list" }
-    { op: "update", input: {
+    { o: "create", i: { ref: "planet_ref01" } }
+    { o: "list" }
+    { o: "update", i: {
         ref: "planet_ref01", srcdatavar: "planet_ref01_data",
         suffix: "_up0", textfield: "title" } }
-    { op: "load", input: {
+    { o: "load", i: {
         ref: "planet_ref01", srcdatavar: "planet_ref01_data", suffix: "_dt0" } }
-    { op: "remove", input: { ref: "planet_ref01", suffix: "_rm0" } }
+    { o: "remove", i: { ref: "planet_ref01", suffix: "_rm0" } }
   ]
 }
 `
@@ -136,25 +136,25 @@ main: kit: entity: '3ds_session': {
   field: {
     id: { name: "id", kind: "field", type: "\`$STRING\`", required: true }
   }
-  fields: [ { name: "id", req: true, type: "\`$STRING\`" } ]
+  fields: { "id": { h: 'Id', n: "id", r: true, t: "\`$STRING\`" } }
   op: {
     list: { name: "list", points: [ {
-      args: {}, method: "GET", orig: "/3ds-session", segments: [{ lit: "3ds-session" }]
-      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+      g: {}, m: "GET", o: "/3ds-session", s: [{ lit: "3ds-session" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
     load: { name: "load", points: [ {
-      args: { params: [
-        { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "s01" }
+      g: { params: [
+        { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "s01" }
       ] }
-      method: "GET", orig: "/3ds-session/{id}", segments: [{ lit: "3ds-session" }, { var: "id" }]
-      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+      m: "GET", o: "/3ds-session/{id}", s: [{ lit: "3ds-session" }, { var: "id" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
   }
 }
 
 main: kit: flow: Basic3dsSessionFlow: {
   entity: "3ds_session", kind: "basic", name: "Basic3dsSessionFlow"
   step: [
-    { op: "list" }
-    { op: "load", input: {
+    { o: "list" }
+    { o: "load", i: {
         ref: "3ds_session_ref01", srcdatavar: "3ds_session_ref01_data", suffix: "_dt0" } }
   ]
 }
@@ -177,37 +177,37 @@ main: kit: entity: pull: {
     id:    { name: "id",    kind: "field", type: "\`$STRING\`", required: true }
     title: { name: "title", kind: "field", type: "\`$STRING\`", required: true }
   }
-  fields: [
-    { name: "id",    req: true, type: "\`$STRING\`" }
-    { name: "title", req: true, type: "\`$STRING\`" }
-  ]
+  fields: {
+    "id": { h: 'Id', n: "id",    r: true, t: "\`$STRING\`" }
+    "title": { h: 'Title', n: "title", r: true, t: "\`$STRING\`" }
+  }
   op: {
     list: { name: "list", points: [ {
-      args: {}, method: "GET", orig: "/pull", segments: [{ lit: "pull" }]
-      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+      g: {}, m: "GET", o: "/pull", s: [{ lit: "pull" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
     load: { name: "load", points: [ {
-      args: { params: [
-        { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "p01" }
+      g: { params: [
+        { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "p01" }
       ] }
-      method: "GET", orig: "/pull/{id}", segments: [{ lit: "pull" }, { var: "id" }]
-      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+      m: "GET", o: "/pull/{id}", s: [{ lit: "pull" }, { var: "id" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
     create: {
       name: "create"
       points: [
         {
-          args: { body: [ { kind: "body", name: "title", reqd: true, type: "\`$STRING\`" } ] }
-          method: "POST", orig: "/pull", segments: [{ lit: "pull" }]
-          transform: { req: "\`reqdata\`", res: "\`body\`" }
+          g: { body: [ { k: "body", n: "title", r: true, t: "\`$STRING\`" } ] }
+          m: "POST", o: "/pull", s: [{ lit: "pull" }]
+          t: { req: "\`reqdata\`", res: "\`body\`" }
         }
         {
-          args: {
-            params: [ { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "p01" } ]
-            body: [ { kind: "body", name: "image", type: "\`$STRING\`" } ]
+          g: {
+            params: [ { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "p01" } ]
+            body: [ { k: "body", n: "image", r: false, t: "\`$STRING\`" } ]
           }
-          method: "POST", orig: "/pull/{id}/image"
-          segments: [{ lit: "pull" }, { var: "id" }, { lit: "image" }]
-          select: { '$action': "upload_image", exist: [ "id" ] }
-          transform: { req: "\`reqdata\`", res: "\`body\`" }
+          m: "POST", o: "/pull/{id}/image"
+          s: [{ lit: "pull" }, { var: "id" }, { lit: "image" }]
+          q: { '$action': "upload_image", exist: [ "id" ] }
+          t: { req: "\`reqdata\`", res: "\`body\`" }
         }
       ]
     }
@@ -215,45 +215,45 @@ main: kit: entity: pull: {
       name: "update"
       points: [
         {
-          args: {
-            params: [ { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "p01" } ]
-            body: [ { kind: "body", name: "title", type: "\`$STRING\`" } ]
+          g: {
+            params: [ { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "p01" } ]
+            body: [ { k: "body", n: "title", r: false, t: "\`$STRING\`" } ]
           }
-          method: "PATCH", orig: "/pull/{id}", segments: [{ lit: "pull" }, { var: "id" }]
-          transform: { req: "\`reqdata\`", res: "\`body\`" }
+          m: "PATCH", o: "/pull/{id}", s: [{ lit: "pull" }, { var: "id" }]
+          t: { req: "\`reqdata\`", res: "\`body\`" }
         }
         {
-          args: {
-            params: [ { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "p01" } ]
-            body: [ { kind: "body", name: "commit_title", type: "\`$STRING\`" } ]
+          g: {
+            params: [ { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "p01" } ]
+            body: [ { k: "body", n: "commit_title", r: false, t: "\`$STRING\`" } ]
           }
-          method: "PUT", orig: "/pull/{id}/merge"
-          segments: [{ lit: "pull" }, { var: "id" }, { lit: "merge" }]
-          select: { '$action': "merge", exist: [ "id" ] }
-          transform: { req: "\`reqdata\`", res: "\`body\`" }
+          m: "PUT", o: "/pull/{id}/merge"
+          s: [{ lit: "pull" }, { var: "id" }, { lit: "merge" }]
+          q: { '$action': "merge", exist: [ "id" ] }
+          t: { req: "\`reqdata\`", res: "\`body\`" }
         }
       ]
     }
     remove: { name: "remove", points: [ {
-      args: { params: [
-        { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "p01" }
+      g: { params: [
+        { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "p01" }
       ] }
-      method: "DELETE", orig: "/pull/{id}", segments: [{ lit: "pull" }, { var: "id" }]
-      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+      m: "DELETE", o: "/pull/{id}", s: [{ lit: "pull" }, { var: "id" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
   }
 }
 
 main: kit: flow: BasicPullFlow: {
   entity: "pull", kind: "basic", name: "BasicPullFlow"
   step: [
-    { op: "create", input: { ref: "pull_ref01" } }
-    { op: "list" }
-    { op: "update", input: {
+    { o: "create", i: { ref: "pull_ref01" } }
+    { o: "list" }
+    { o: "update", i: {
         ref: "pull_ref01", srcdatavar: "pull_ref01_data",
         suffix: "_up0", textfield: "title" } }
-    { op: "load", input: {
+    { o: "load", i: {
         ref: "pull_ref01", srcdatavar: "pull_ref01_data", suffix: "_dt0" } }
-    { op: "remove", input: { ref: "pull_ref01", suffix: "_rm0" } }
+    { o: "remove", i: { ref: "pull_ref01", suffix: "_rm0" } }
   ]
 }
 `
@@ -271,26 +271,26 @@ main: kit: entity: badge: {
   field: {
     id: { name: "id", kind: "field", type: "\`$STRING\`", required: true }
   }
-  fields: [ { name: "id", req: true, type: "\`$STRING\`" } ]
+  fields: { "id": { h: 'Id', n: "id", r: true, t: "\`$STRING\`" } }
   op: {
     list: { name: "list", points: [ {
-      args: {}, method: "GET", orig: "/badge", segments: [{ lit: "badge" }]
-      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+      g: {}, m: "GET", o: "/badge", s: [{ lit: "badge" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
     update: { name: "update", points: [ {
-      args: {
-        params: [ { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "b01" } ]
-        body: [ { kind: "body", name: "reason", type: "\`$STRING\`" } ]
+      g: {
+        params: [ { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "b01" } ]
+        body: [ { k: "body", n: "reason", r: false, t: "\`$STRING\`" } ]
       }
-      method: "POST", orig: "/badge/{id}/award"
-      segments: [{ lit: "badge" }, { var: "id" }, { lit: "award" }]
-      select: { '$action': "award", exist: [ "id" ] }
-      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+      m: "POST", o: "/badge/{id}/award"
+      s: [{ lit: "badge" }, { var: "id" }, { lit: "award" }]
+      q: { '$action': "award", exist: [ "id" ] }
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
   }
 }
 
 main: kit: flow: BasicBadgeFlow: {
   entity: "badge", kind: "basic", name: "BasicBadgeFlow"
-  step: [ { op: "list" } ]
+  step: [ { o: "list" } ]
 }
 `
 
@@ -314,50 +314,50 @@ main: kit: entity: meeting: {
     id:    { name: "id",    kind: "field", type: "\`$STRING\`", required: true }
     topic: { name: "topic", kind: "field", type: "\`$STRING\`", required: true }
   }
-  fields: [
-    { name: "id",    req: true, type: "\`$STRING\`" }
-    { name: "topic", req: true, type: "\`$STRING\`" }
-  ]
+  fields: {
+    "id": { h: 'Id', n: "id",    r: true, t: "\`$STRING\`" }
+    "topic": { h: 'Topic', n: "topic", r: true, t: "\`$STRING\`" }
+  }
   op: {
     list: { name: "list", points: [ {
-      args: { params: [
-        { kind: "param", name: "user_id", orig: "user_id", reqd: true, type: "\`$STRING\`", example: "u01" }
+      g: { params: [
+        { k: "param", n: "user_id", or: "user_id", r: true, t: "\`$STRING\`", ex: "u01" }
       ] }
-      method: "GET", orig: "/user/{user_id}/meeting"
-      segments: [{ lit: "user" }, { var: "user_id" }, { lit: "meeting" }]
-      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+      m: "GET", o: "/user/{user_id}/meeting"
+      s: [{ lit: "user" }, { var: "user_id" }, { lit: "meeting" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
     load: { name: "load", points: [ {
-      args: { params: [
-        { kind: "param", name: "user_id", orig: "user_id", reqd: true, type: "\`$STRING\`", example: "u01" }
-        { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "m01" }
+      g: { params: [
+        { k: "param", n: "user_id", or: "user_id", r: true, t: "\`$STRING\`", ex: "u01" }
+        { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "m01" }
       ] }
-      method: "GET", orig: "/user/{user_id}/meeting/{id}"
-      segments: [{ lit: "user" }, { var: "user_id" }, { lit: "meeting" }, { var: "id" }]
-      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+      m: "GET", o: "/user/{user_id}/meeting/{id}"
+      s: [{ lit: "user" }, { var: "user_id" }, { lit: "meeting" }, { var: "id" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
     update: {
       name: "update"
       points: [
         {
-          args: {
+          g: {
             params: [
-              { kind: "param", name: "user_id", orig: "user_id", reqd: true, type: "\`$STRING\`", example: "u01" }
-              { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "m01" }
+              { k: "param", n: "user_id", or: "user_id", r: true, t: "\`$STRING\`", ex: "u01" }
+              { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "m01" }
             ]
-            body: [ { kind: "body", name: "topic", type: "\`$STRING\`" } ]
+            body: [ { k: "body", n: "topic", r: false, t: "\`$STRING\`" } ]
           }
-          method: "PATCH", orig: "/user/{user_id}/meeting/{id}"
-          segments: [{ lit: "user" }, { var: "user_id" }, { lit: "meeting" }, { var: "id" }]
-          transform: { req: "\`reqdata\`", res: "\`body\`" }
+          m: "PATCH", o: "/user/{user_id}/meeting/{id}"
+          s: [{ lit: "user" }, { var: "user_id" }, { lit: "meeting" }, { var: "id" }]
+          t: { req: "\`reqdata\`", res: "\`body\`" }
         }
         {
-          args: {
-            params: [ { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "m01" } ]
-            body: [ { kind: "body", name: "state", type: "\`$STRING\`" } ]
+          g: {
+            params: [ { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "m01" } ]
+            body: [ { k: "body", n: "state", r: false, t: "\`$STRING\`" } ]
           }
-          method: "PUT", orig: "/meeting/{id}/status"
-          segments: [{ lit: "meeting" }, { var: "id" }, { lit: "status" }]
-          select: { '$action': "status", exist: [ "id" ] }
-          transform: { req: "\`reqdata\`", res: "\`body\`" }
+          m: "PUT", o: "/meeting/{id}/status"
+          s: [{ lit: "meeting" }, { var: "id" }, { lit: "status" }]
+          q: { '$action': "status", exist: [ "id" ] }
+          t: { req: "\`reqdata\`", res: "\`body\`" }
         }
       ]
     }
@@ -365,22 +365,22 @@ main: kit: entity: meeting: {
       name: "remove"
       points: [
         {
-          args: { params: [
-            { kind: "param", name: "user_id", orig: "user_id", reqd: true, type: "\`$STRING\`", example: "u01" }
-            { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "m01" }
+          g: { params: [
+            { k: "param", n: "user_id", or: "user_id", r: true, t: "\`$STRING\`", ex: "u01" }
+            { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "m01" }
           ] }
-          method: "DELETE", orig: "/user/{user_id}/meeting/{id}"
-          segments: [{ lit: "user" }, { var: "user_id" }, { lit: "meeting" }, { var: "id" }]
-          transform: { req: "\`reqdata\`", res: "\`body\`" }
+          m: "DELETE", o: "/user/{user_id}/meeting/{id}"
+          s: [{ lit: "user" }, { var: "user_id" }, { lit: "meeting" }, { var: "id" }]
+          t: { req: "\`reqdata\`", res: "\`body\`" }
         }
         {
-          args: { params: [
-            { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "m01" }
+          g: { params: [
+            { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "m01" }
           ] }
-          method: "POST", orig: "/meeting/{id}/archive"
-          segments: [{ lit: "meeting" }, { var: "id" }, { lit: "archive" }]
-          select: { '$action': "archive", exist: [ "id" ] }
-          transform: { req: "\`reqdata\`", res: "\`body\`" }
+          m: "POST", o: "/meeting/{id}/archive"
+          s: [{ lit: "meeting" }, { var: "id" }, { lit: "archive" }]
+          q: { '$action': "archive", exist: [ "id" ] }
+          t: { req: "\`reqdata\`", res: "\`body\`" }
         }
       ]
     }
@@ -389,7 +389,7 @@ main: kit: entity: meeting: {
 
 main: kit: flow: BasicMeetingFlow: {
   entity: "meeting", kind: "basic", name: "BasicMeetingFlow"
-  step: [ { op: "list" } ]
+  step: [ { o: "list" } ]
 }
 `
 
@@ -407,29 +407,29 @@ main: kit: entity: alert: {
     id:   { name: "id",   kind: "field", type: "\`$STRING\`", required: true }
     note: { name: "note", kind: "field", type: "\`$STRING\`", required: true }
   }
-  fields: [
-    { name: "id",   req: true, type: "\`$STRING\`" }
-    { name: "note", req: true, type: "\`$STRING\`" }
-  ]
+  fields: {
+    "id": { h: 'Id', n: "id",   r: true, t: "\`$STRING\`" }
+    "note": { h: 'Note', n: "note", r: true, t: "\`$STRING\`" }
+  }
   op: {
     list: { name: "list", points: [ {
-      args: {}, method: "GET", orig: "/alert", segments: [{ lit: "alert" }]
-      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+      g: {}, m: "GET", o: "/alert", s: [{ lit: "alert" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
     update: { name: "update", points: [ {
-      args: {
-        params: [ { kind: "param", name: "id", orig: "id", reqd: true, type: "\`$STRING\`", example: "a01" } ]
-        body: [ { kind: "body", name: "note", type: "\`$STRING\`" } ]
+      g: {
+        params: [ { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "a01" } ]
+        body: [ { k: "body", n: "note", r: false, t: "\`$STRING\`" } ]
       }
-      method: "POST", orig: "/alert/{id}/ack"
-      segments: [{ lit: "alert" }, { var: "id" }, { lit: "ack" }]
-      select: { '$action': "ack", exist: [ "id" ] }
-      transform: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+      m: "POST", o: "/alert/{id}/ack"
+      s: [{ lit: "alert" }, { var: "id" }, { lit: "ack" }]
+      q: { '$action': "ack", exist: [ "id" ] }
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
   }
 }
 
 main: kit: flow: BasicAlertFlow: {
   entity: "alert", kind: "basic", name: "BasicAlertFlow"
-  step: [ { op: "list" } ]
+  step: [ { o: "list" } ]
 }
 `
 
@@ -1491,15 +1491,15 @@ describe('seneca-provider target, from its package', () => {
         create: {
           name: 'create',
           points: [
-            { orig: '/pull' },
-            { orig: '/pull/{id}/image', select: { $action: 'upload_image' } },
+            { o: '/pull' },
+            { o: '/pull/{id}/image', q: { $action: 'upload_image' } },
           ],
         },
         update: {
           name: 'update',
           points: [
-            { orig: '/pull/{id}' },
-            { orig: '/pull/{id}/merge', select: { $action: 'merge' } },
+            { o: '/pull/{id}' },
+            { o: '/pull/{id}/merge', q: { $action: 'merge' } },
           ],
         },
       },
@@ -1531,9 +1531,9 @@ describe('seneca-provider target, from its package', () => {
           update: {
             name: 'update',
             points: [
-              { orig: '/pull/{id}' },
-              { orig: '/pull/{id}/toString', select: { $action: 'toString' } },
-              { orig: '/pull/{id}/valueOf', select: { $action: 'valueOf' } },
+              { o: '/pull/{id}' },
+              { o: '/pull/{id}/toString', q: { $action: 'toString' } },
+              { o: '/pull/{id}/valueOf', q: { $action: 'valueOf' } },
             ],
           },
         },
@@ -1583,12 +1583,12 @@ describe('seneca-provider target, from its package', () => {
         op: {
           load: {
             points: [{
-              segments: [{ var: 'base_id' }, { var: 'table_id' }, { var: 'record_id' }],
-              args: {
+              s: [{ var: 'base_id' }, { var: 'table_id' }, { var: 'record_id' }],
+              g: {
                 params: {
-                  base_id: { name: 'base_id', reqd: true },
-                  table_id: { name: 'table_id', reqd: true },
-                  record_id: { name: 'record_id', reqd: true },
+                  base_id: { n: 'base_id', r: true },
+                  table_id: { n: 'table_id', r: true },
+                  record_id: { n: 'record_id', r: true },
                 },
               },
             }],
@@ -1604,12 +1604,12 @@ describe('seneca-provider target, from its package', () => {
     test('a single-param route with a field named id uses entityIdField', () => {
       const ent = {
         name: 'board',
-        fields: { id: { name: 'id' } },
+        fields: { id: { n: 'id' } },
         op: {
           load: {
             points: [{
-              segments: [{ lit: 'boards' }, { var: 'id' }],
-              args: { params: { id: { name: 'id', reqd: true } } },
+              s: [{ lit: 'boards' }, { var: 'id' }],
+              g: { params: { id: { n: 'id', r: true } } },
             }],
           },
         },
@@ -1621,7 +1621,7 @@ describe('seneca-provider target, from its package', () => {
 
 
   // `seedRecord` — what the generated mock seeds for a parent key.
-  describe('seedRecord', () => {
+describe('seedRecord', () => {
 
     const { seedRecord } = loadComponent('Extras_seneca-provider.ts')
 
