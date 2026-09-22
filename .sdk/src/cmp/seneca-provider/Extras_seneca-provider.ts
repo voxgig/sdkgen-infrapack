@@ -920,7 +920,7 @@ ${!loadHasKey(e) ? '' : `
 
     await assert.rejects(
       () => seneca.entity('provider/${provider.lower}/${e.name}')
-        .make$({ ${pairs}id: '${e.name}0' })
+        .make$({ ${pairs}id: '${entIdLiteral(e, '0')}' })
         .directive$({ action$: 'no_such_action' })
         .save$(),
       /action\\$ "no_such_action" is not an action/,
@@ -982,7 +982,7 @@ ${!loadHasKey(e) ? '' : `
 
     try {
       await seneca.entity('provider/${provider.lower}/${e.name}')
-        .make$({ ${pairs}id: '${e.name}0' })
+        .make$({ ${pairs}id: '${entIdLiteral(e, '0')}' })
         .directive$({ action$: '${act.action}' })
         .save$()
     }

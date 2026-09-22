@@ -1957,6 +1957,21 @@ describe('seneca-provider target, from its package', () => {
       })
 
 
+    // The key block runs ahead of the action branch, so an action test on a
+    // composite entity has to address it by its whole id or be refused for
+    // the id's shape before the action name is even looked at.
+    test('the action tests address a composite entity by its whole id', () => {
+      const suite = String(files[Object.keys(files)
+        .find((p) => /test\/demo-provider\.test\.js$/.test(p))])
+
+      const start = suite.indexOf("it('repo-action-unknown-save'")
+      ok(0 <= start, 'no unknown-action test for the composite entity')
+      const body = suite.slice(start, suite.indexOf("\n  it('", start + 1))
+      ok(body.includes("id: 'owner0/repo0'"),
+        'the composite entity is addressed by a bare name:\n' + body)
+    })
+
+
     // No round-trip without a create route, and no update leg without an
     // update route: either would be a suite that fails on a working provider.
     test('the round-trip is generated only for the ops the entity has', () => {
