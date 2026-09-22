@@ -22,7 +22,7 @@
     "sdkgen-package.json"
   ],
   "scripts": {
-    "test": "node tools/comment-gate.cjs && node tools/dep-gate.cjs && node --enable-source-maps --test test/*.test.js",
+    "test": "node tools/comment-gate.cjs && node tools/dep-gate.cjs && node --test tools/dep-gate.test.cjs && node --enable-source-maps --test test/*.test.js",
     "test-some": "node --enable-source-maps --test-name-pattern=\"$npm_config_pattern\" --test test/*.test.js",
     "watch": "tsc -w",
     "build": "tsc",
