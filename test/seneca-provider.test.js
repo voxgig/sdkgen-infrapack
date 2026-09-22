@@ -857,22 +857,35 @@ main: kit: flow: BasicEmblemFlow: {
 // The generated TypeScript SDK, compiled and loaded, so a provider can be
 // driven against the SDK's own offline mock transport rather than a stand-in.
 // The SDK has no runtime dependencies; only the type roots are borrowed.
+// The caller owns `dir` once it has one, and removes it in an `after`. Until
+// then this does: a throw on the way — a compile error, a missing entry
+// module — otherwise leaves the checkout behind with nobody holding its path,
+// as compileProvider's own finally already prevented.
 function compileSdk(files) {
   const dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'infrapack-sdk-'))
-  for (const [p, content] of Object.entries(files)) {
-    if (p.startsWith('ts/src/')) {
-      const dest = Path.join(dir, p.slice('ts/'.length))
-      Fs.mkdirSync(Path.dirname(dest), { recursive: true })
-      Fs.writeFileSync(dest, content)
+  let sdk = null
+  try {
+    for (const [p, content] of Object.entries(files)) {
+      if (p.startsWith('ts/src/')) {
+        const dest = Path.join(dir, p.slice('ts/'.length))
+        Fs.mkdirSync(Path.dirname(dest), { recursive: true })
+        Fs.writeFileSync(dest, content)
+      }
+    }
+    execFileSync(process.execPath, [
+      Path.join(PKG, 'node_modules', 'typescript', 'bin', 'tsc'),
+      '-p', Path.join(dir, 'src', 'tsconfig.json'),
+      '--typeRoots', Path.join(PKG, 'node_modules', '@types'),
+      '--noCheck', '--sourceMap', 'false',
+    ], { cwd: PKG, stdio: 'inherit' })
+    sdk = { dir, module: require(Path.join(dir, 'dist', 'DemoSDK.js')) }
+  }
+  finally {
+    if (null == sdk) {
+      Fs.rmSync(dir, { recursive: true, force: true })
     }
   }
-  execFileSync(process.execPath, [
-    Path.join(PKG, 'node_modules', 'typescript', 'bin', 'tsc'),
-    '-p', Path.join(dir, 'src', 'tsconfig.json'),
-    '--typeRoots', Path.join(PKG, 'node_modules', '@types'),
-    '--noCheck', '--sourceMap', 'false',
-  ], { cwd: PKG, stdio: 'inherit' })
-  return { dir, module: require(Path.join(dir, 'dist', 'DemoSDK.js')) }
+  return sdk
 }
 
 
