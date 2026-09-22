@@ -26,19 +26,30 @@ projects in a temporary directory, so even its own paths differ per run.
 
 ## What this repository needs, as distinct from what a machine has
 
-Node 24 and npm. That is a REQUIREMENT, not a claim that they are present:
-probe first, as the pre-push hook does (`command -v node`).
+Node 24, npm, and `make`. Those are REQUIREMENTS, not a claim that they are
+present: probe first. `command -v` answers only whether a binary exists, and
+Node's major is part of the requirement, so read `node --version` — nothing
+here enforces it, since `package.json` declares no `engines.node`. The
+pre-push hook probes for `node` because the comment gate is a Node script; it
+does not check the major, and it does not need `make`, which the prescribed
+gate command below does.
 
 ```bash
-npm install          # no lockfile is committed; every install resolves anew
+npm install          # writes an ignored lockfile; see below
 npm run build        # type-checks the target's components
 npm test             # the comment gate, then the suite
 npm run check-package # this repo is itself an sdkgen package
 ```
 
-Nothing else is needed — the target emits a TypeScript package, so no other
-language toolchain is in play. CI runs on ubuntu only; whether any of this
-works on Windows or macOS is untested rather than known.
+`package-lock.json` is gitignored rather than absent, so a fresh checkout and
+CI resolve dependencies anew, and a persistent checkout does not: npm writes
+the lock on the first install and reuses it while its versions still satisfy
+`package.json`. To see what a consumer would get today, remove the lock or
+install into a clean clone.
+
+No other LANGUAGE toolchain is in play — the target emits a TypeScript
+package. CI runs on ubuntu only; whether any of this works on Windows or macOS
+is untested rather than known.
 
 ## Source code comments
 
