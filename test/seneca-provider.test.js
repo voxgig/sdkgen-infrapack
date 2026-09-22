@@ -718,6 +718,65 @@ main: kit: flow: BasicProjectFlow: {
 `
 
 
+// A COMPOSITE KEY WITH AN ACTION ON A READ CMD. Two path parameters address
+// one record and a third route — `/latest` — is folded into `load` as an
+// action, so the action has to be handed the same two parameters the canonical
+// read is, rather than the joined id under the terminal parameter's name.
+const MIRROR_ENTITY = `
+main: kit: entity: mirror: {
+  alias: field: {}
+  name: "mirror"
+  id: { field: "id", name: "id", parts: ["owner", "slug"], sep: "/", from: { owner: "owner", slug: "slug" } }
+  field: {
+    id:    { name: "id",    kind: "field", type: "\`$STRING\`" }
+    owner: { name: "owner", kind: "field", type: "\`$STRING\`", required: true }
+    slug:  { name: "slug",  kind: "field", type: "\`$STRING\`", required: true }
+    note:  { name: "note",  kind: "field", type: "\`$STRING\`" }
+  }
+  fields: {
+    "id":    { h: 'Id', n: "id",    r: false, t: "\`$STRING\`" }
+    "owner": { h: 'Owner', n: "owner", r: true,  t: "\`$STRING\`" }
+    "slug":  { h: 'Slug', n: "slug",  r: true,  t: "\`$STRING\`" }
+    "note":  { h: 'Note', n: "note",  r: false, t: "\`$STRING\`" }
+  }
+  op: {
+    list: { name: "list", points: [ {
+      g: {}, m: "GET", o: "/mirror", s: [{ lit: "mirror" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    load: {
+      name: "load"
+      points: [
+        {
+          g: { params: [
+            { k: "param", n: "owner", or: "owner", r: true, t: "\`$STRING\`", ex: "o01" }
+            { k: "param", n: "slug", or: "slug", r: true, t: "\`$STRING\`", ex: "s01" }
+          ] }
+          m: "GET", o: "/mirror/{owner}/{slug}"
+          s: [{ lit: "mirror" }, { var: "owner" }, { var: "slug" }]
+          t: { req: "\`reqdata\`", res: "\`body\`" }
+        }
+        {
+          g: { params: [
+            { k: "param", n: "owner", or: "owner", r: true, t: "\`$STRING\`", ex: "o01" }
+            { k: "param", n: "slug", or: "slug", r: true, t: "\`$STRING\`", ex: "s01" }
+          ] }
+          m: "GET", o: "/mirror/{owner}/{slug}/latest"
+          s: [{ lit: "mirror" }, { var: "owner" }, { var: "slug" }, { lit: "latest" }]
+          q: { '$action': "latest", exist: [ "owner", "slug" ] }
+          t: { req: "\`reqdata\`", res: "\`body\`" }
+        }
+      ]
+    }
+  }
+}
+
+main: kit: flow: BasicMirrorFlow: {
+  entity: "mirror", kind: "basic", name: "BasicMirrorFlow"
+  step: [ { o: "list" } ]
+}
+`
+
+
 // A KEY NAMED LIKE THE PROVIDER'S OWN BOOKKEEPING. The provider parks an
 // unrelated API `id` under `<provider>_id`, so in a provider called `demo` the
 // name `demo_id` is taken — and this entity, nested under `/demo/{demo_id}/`
@@ -1872,7 +1931,8 @@ describe('seneca-provider target, from its package', () => {
       const out = await generateInto(consumer, {
         model: consumerModel(consumer.sdk,
           ACCOUNT_ENTITY + REPO_ENTITY + LEDGER_ENTITY + SETTING_ENTITY +
-          PROJECT_ENTITY + PARENT_ACTION_ENTITY + EMBLEM_ENTITY),
+          PROJECT_ENTITY + PARENT_ACTION_ENTITY + EMBLEM_ENTITY +
+          MIRROR_ENTITY),
       })
       files = out.files
       sdk = compileSdk(files)
@@ -2119,6 +2179,54 @@ describe('seneca-provider target, from its package', () => {
         created.slice(0, created.indexOf('##', 3))),
         'the how-to teaches a create with an empty body:\n' +
         created.slice(0, 400))
+    })
+
+
+    // AN ACTION ON A READ CMD ADDRESSES THE RECORD TOO.
+    //
+    // The write path splits a composite id into the path parameters the API
+    // names. The read path did not: it moved the whole joined id under the
+    // terminal parameter's name, so `/mirror/{owner}/{mirror}/latest` was asked
+    // for a mirror called `owner0/mirror0` with no owner at all.
+    test('a read action splits a composite id into the API\'s own keys',
+      async () => {
+        const calls = []
+        await drive(entity, 'mirror', 'load',
+          { q: { id: 'owner0/mirror0', action$: 'latest' }, ent: {} }, calls)
+
+        strictEqual(calls.length, 1, 'the action never reached the SDK')
+        deepStrictEqual(calls[0][2],
+          { owner: 'owner0', slug: 'mirror0', $action: 'latest' })
+      })
+
+
+    // ...and the same translation on a SINGLE renamed key, which is the shape
+    // the old code got right: `username`, not `id`, and not both.
+    test('a read action carries a renamed key under the API\'s name', async () => {
+      const calls = []
+      await drive(entity, 'meeting', 'remove',
+        { q: { id: 'm1', action$: 'archive' }, ent: {} }, calls)
+
+      strictEqual(calls[0][1], 'remove')
+      deepStrictEqual(calls[0][2], { id: 'm1', $action: 'archive' })
+    })
+
+
+    // An id that is not all of the parts cannot build the action's URL either,
+    // so it is refused rather than sent — as the canonical read is.
+    test('a read action refuses an incomplete composite id', async () => {
+      const calls = []
+      let err = null
+
+      try {
+        await drive(entity, 'mirror', 'load',
+          { q: { id: 'incomplete', action$: 'latest' }, ent: {} }, calls)
+      }
+      catch (e) { err = e }
+
+      ok(null != err, 'an incomplete id was sent to the action route')
+      ok(/id must be 'owner\/slug'/.test(err.message), err.message)
+      deepStrictEqual(calls, [], 'the SDK was called anyway')
     })
 
 
