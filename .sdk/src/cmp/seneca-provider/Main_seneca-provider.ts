@@ -6,6 +6,7 @@ import {
   opRequestShape, opParams, ownPoint, entityPath,
   collectDeps, repoInfo, packageName, packageVersion, apiName, envName,
   authorInfo, contributorList, isAuthActive, isHttpBasicAuth, jsKey, jsProp,
+  resolveAuthIn, resolveAuthName, resolveAuthPrefix,
   SdkGenError,
   PUBLISHER, PUBLISHER_URL,
   pointSegments,
@@ -155,15 +156,26 @@ function idSpec(ent: any): { parts: string[], sep: string, from?: Record<string,
     return null
   }
 
-  return { parts: [rk], sep: idSep(ent) }
+  const from = ent?.id?.from
+  const path = null != from && 'object' === typeof from ? from[rk] : null
+  return {
+    parts: [rk],
+    sep: idSep(ent),
+    ...(null != path && '' !== String(path) ? { from: { [rk]: String(path) } } : {}),
+  }
 }
 
 
+// The model's identifier when the load match carries it, else the terminal
+// path parameter, else a lone required query parameter: the rule the SDK's
+// offline transport keys its store by.
 function recordKey(ent: any): string {
   const idf = entityIdField(ent)
   if (null != idf && '' !== idf) {
     return String(idf)
   }
+
+  let fallback = ''
 
   for (const opname of ['load', 'remove', 'update']) {
     const op = (ent.op || {})[opname]
@@ -174,11 +186,11 @@ function recordKey(ent: any): string {
     const canonical = op.points.filter((pt: any) =>
       null == (pt && pt.q && pt.q['$action']))
     const point = ownPoint(0 < canonical.length ? canonical : op.points)
-    const vars = pointSegments(point)
-      .filter((seg: any) => null != seg.var)
+    const segs = pointSegments(point)
+    const last = segs[segs.length - 1]
 
-    if (0 < vars.length) {
-      return String(vars[vars.length - 1].var)
+    if (null != last && null != last.var) {
+      return String(last.var)
     }
 
     const query = (point && point.g && point.g.query) || []
@@ -186,9 +198,17 @@ function recordKey(ent: any): string {
     if (1 === reqdQuery.length) {
       return String(reqdQuery[0].n)
     }
+
+    // A literal-terminal route names a facet of a record: a last resort.
+    if ('' === fallback) {
+      const vars = segs.filter((seg: any) => null != seg.var)
+      if (0 < vars.length) {
+        fallback = String(vars[vars.length - 1].var)
+      }
+    }
   }
 
-  return 'id'
+  return '' !== fallback ? fallback : 'id'
 }
 
 
@@ -494,6 +514,11 @@ const Main = cmp(function Main(props: any) {
     // plumbing one anyway produces a credential path that cannot work.
     authActive: isAuthActive(model),
     authBasic: isAuthActive(model) && isHttpBasicAuth(model),
+    // Where the credential goes, resolved as the SDK's auth stage does.
+    authIn: resolveAuthIn(model),
+    authName: 'header' === resolveAuthIn(model) ?
+      resolveAuthName(model).toLowerCase() : resolveAuthName(model),
+    authPrefix: resolveAuthPrefix(model),
   }
 
   // `.gitignore` is EMITTED rather than copied — npm strips that filename
@@ -818,6 +843,15 @@ function ${provider.pluginName}(this: any, options: ${provider.pluginName}Option
         '${provider.pkgName}: ${e.name} ' + cmd + ': ${k} is required'
       )
     }
+
+    // A path parameter is one value. A loaded record can carry an object
+    // under the same name, and that must not be sent as a URL segment.
+    if ('object' === typeof value) {
+      throw new Error(
+        '${provider.pkgName}: ${e.name} ' + cmd + ': ${k} must be a single ' +
+        'value to build the request path, not an object'
+      )
+    }
     return value
   }
 
@@ -1053,19 +1087,18 @@ ${rows}
       each(provider.entities, (e: any) => {
         const eparts = idParts(e.ent)
         const espec = idSpec(e.ent)
-        const guard = (cmd: string, src: string) => {
-          const keys = 'save' === cmd ?
-            [...new Set([...(e.opParents.create || []), ...(e.opParents.update || [])])].sort() :
-            (e.opParents[cmd] || [])
+        // Guards of ONE op: save's create and update branches guard their own.
+        const guard = (opname: string, src: string, label = opname, ind = '      ') => {
+          const keys = e.opParents[opname] || []
 
           return keys
             .filter((k: string) => !eparts.includes(k))
             .map((k: string) =>
-              `      ${guardName(e, k)}(${jsProp(src, k)}, '${cmd}')\n`)
+              `${ind}${guardName(e, k)}(${jsProp(src, k)}, '${label}')\n`)
             .join('')
         }
 
-        const refuse = (cmd: string) => {
+        const refuse = (cmd: string, ind = '      ') => {
           if (true !== (e.idmisaddressed || {})[cmd]) {
             return ''
           }
@@ -1073,7 +1106,7 @@ ${rows}
             recordKey(e.ent)
           const addresses = addressKeys(e.ent, cmd)
 
-          return `      misaddressed('${e.name}', '${cmd}', '${key}', ` +
+          return `${ind}misaddressed('${e.name}', '${cmd}', '${key}', ` +
             `[${addresses.map((k: string) => `'${k}'`).join(', ')}])
 `
         }
@@ -1094,22 +1127,23 @@ ${rows}
             `${jsKey(k)}: ${jsProp('q', k === rk ? 'id' : k)}`).join(', ')} }`
         }
 
-        // The line that splits the Seneca id into the API's parameters,
-        // emitted only where there is one record to address. `list` has none.
-        // The entity-options argument that carries the path parameters for a
-        // write. Empty for an ordinary entity, which needs no such channel.
-        const entArg = 0 === eparts.length ? '' :
-          `null == key ? undefined : { match: key }`
+        // Seneca's `id` and the API's key differ: composite, or not called id.
+        const keyed = null != espec
+
+        // The entity-options argument carrying a write's addressing values.
+        const entArg = !keyed ? '' : `null == key ? undefined : { match: key }`
 
         const splitLine = (cmd: string) => 0 === eparts.length ? '' :
-          `      const key = splitid('${e.name}', ${'save' === cmd ? 'data.id' : 'q.id'}, '${cmd}')\n`
+          `      const key = splitid('${e.name}', q.id, '${cmd}')\n`
 
-        // The data hop, plus the id alias when the API keys the record by
-        // something other than `id`. A composite entity passes the addressing
-        // values through, because the response may not repeat them.
+        // The data hop, plus the id from the values this request addressed the
+        // record with, which the response need not repeat.
         const out = (expr: string, vals?: string) =>
-          null == espec ? `plain(${expr})` :
+          !keyed ? `plain(${expr})` :
             `joinid('${e.name}', plain(${expr})${null == vals ? '' : ', ' + vals})`
+
+        const loadVals = 0 < eparts.length ? 'key' :
+          !keyed ? undefined : `{ ${jsKey(rk)}: q.id }`
 
         const actionBranch = (cmd: string, call: string) => `      const action$ = actionOf(msg)
       if (null != action$) {
@@ -1142,7 +1176,7 @@ ${actionBranch('load',
             `        const hit = await ornull(() => this.shared.sdk.${e.acc}()[op$](actionq(msg.q, '${rk}', action$)))
         return null == hit ? null : entize(${out('hit')})
 `)}${guard('load', 'q')}${splitLine('load')}      const res = await ornull(() => this.shared.sdk.${e.acc}().load(${sdkArg('load')}))
-      return null == res ? null : entize(${out('res', 0 < eparts.length ? 'key' : undefined)})
+      return null == res ? null : entize(${out('res', loadVals)})
     }
 
 `)
@@ -1152,22 +1186,11 @@ ${actionBranch('load',
           const hasCreate = e.ops.includes('create')
           const hasUpdate = e.ops.includes('update')
 
-          const refuseUpdate = true === (e.idmisaddressed || {}).update ?
-            refuse('update') : ''
+          const refuseUpdate = true === (e.idmisaddressed || {}).update
 
-          const body = hasCreate && hasUpdate
-            ? (('' === refuseUpdate) ? `      const res = null == data.id
-        ? await sdk.${e.acc}(${entArg}).create(data)
-        : await sdk.${e.acc}(${entArg}).update(data)` : `      if (null != data.id) {
-  ${refuseUpdate.replace(/\n$/, '')}
-      }
+          const isUpdate = keyed ? 'null != key' : 'null != data.id'
 
-      const res = await sdk.${e.acc}(${entArg}).create(data)`)
-            : hasCreate
-              ? `      const res = await sdk.${e.acc}(${entArg}).create(data)`
-              : `${refuseUpdate}      const res = await sdk.${e.acc}(${entArg}).update(data)`
-
-          const compositeSave = 0 < eparts.length ? `
+          const keyBlock = 0 < eparts.length ? `
       // Seneca carries this ${e.name}'s key as one \`id\`; the API addresses
       // the record by ${eparts.map((p: string) => '`' + p + '`').join(' and ')}.
       //
@@ -1201,13 +1224,16 @@ ${actionBranch('load',
       // which matches a request against a stored record, then looked for a
       // record whose own \`id\` was that joined string and found none.
       delete data.id
-` : ''
-
-          const alias = 0 < eparts.length ? '' : 'id' === rk ? '' :
-            `
+` : !keyed ? '' : `
       // This API keys a ${e.name} by \`${rk}\`; Seneca carries it as \`id\`.
-      if (null == ${jsProp('data', rk)} && null != data.id) {
-        ${jsProp('data', rk)} = data.id
+      // The key goes on the body under the API's own name, where the route
+      // reads it, and into the match, which the SDK consults first.
+      let key = null
+      if (null != data.id) {
+        key = { ${jsKey(rk)}: data.id }
+        if (null == ${jsProp('data', rk)}) {
+          ${jsProp('data', rk)} = data.id
+        }
       }
 
       // \`${provider.lower}_id\` is this provider's own bookkeeping — the
@@ -1216,24 +1242,50 @@ ${actionBranch('load',
       // the request body: a strict API rejects an unknown property, and a
       // lax one may persist it.
       delete ${jsProp('data', provider.lower + '_id')}
+
+      // NOR DOES SENECA'S \`id\`. It holds the \`${rk}\` this API addresses
+      // the record by, under a name this API's ${e.name} does not have: sent
+      // on the body it is at best an unknown property, and to a store that
+      // matches a write against the record it names the wrong one.
+      delete data.id
 `
+
+          const saveVals = keyed ? 'key' : undefined
+
+          const call = (opname: string) =>
+            `await sdk.${e.acc}(${entArg}).${opname}(data)`
+
+          const body = hasCreate && hasUpdate
+            ? (!refuseUpdate ? `      let res
+      if (${isUpdate}) {
+${guard('update', 'data', 'save', '        ')}        res = ${call('update')}
+      }
+      else {
+${guard('create', 'data', 'save', '        ')}        res = ${call('create')}
+      }` : `      if (${isUpdate}) {
+${refuse('update', '        ')}      }
+
+${guard('create', 'data', 'save')}      const res = ${call('create')}`)
+            : hasCreate
+              ? `${guard('create', 'data', 'save')}      const res = ${call('create')}`
+              : `${refuse('update')}${guard('update', 'data', 'save')}      const res = ${call('update')}`
 
           Content(`
   ${jsProp('entity', e.name)}.cmd.save.action =
     async function save_${e.name}(this: any, entize: any, msg: any) {
       const data = msg.ent.data$(false)
-${alias}      const sdk = this.shared.sdk
+${keyBlock}      const sdk = this.shared.sdk
 
 ${actionBranch('save',
             `        // The action's OWN payload is the entity's own fields — data$(false)
         // has already dropped every trailing-\`$\` key, \`action$\` included,
         // so \`$action\` is the only thing added here.
         data.$action = action$
-        const done = await sdk.${e.acc}()[op$](data)
-        return entize(${out('done')})
-`)}${guard('save', 'data')}${compositeSave}${body}
+        const done = await sdk.${e.acc}(${entArg})[op$](data)
+        return entize(${out('done', saveVals)})
+`)}${body}
 
-      return entize(${out('res', 0 < eparts.length ? 'key' : undefined)})
+      return entize(${out('res', saveVals)})
     }
 
 `)

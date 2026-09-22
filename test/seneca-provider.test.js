@@ -434,6 +434,312 @@ main: kit: flow: BasicAlertFlow: {
 `
 
 
+// AN ENTITY THE API KEYS BY `username`, NOT `id` — github's user, in
+// miniature. Its response carries an `id` of its own, unrelated to the key,
+// and an `owner` OBJECT under a name a path parameter could also take.
+const ACCOUNT_ENTITY = `
+main: kit: entity: account: {
+  alias: field: {}
+  name: "account"
+  id: { field: "id", name: "id" }
+  field: {
+    id:       { name: "id",       kind: "field", type: "\`$NUMBER\`" }
+    username: { name: "username", kind: "field", type: "\`$STRING\`", required: true }
+    owner:    { name: "owner",    kind: "field", type: "\`$OBJECT\`" }
+    bio:      { name: "bio",      kind: "field", type: "\`$STRING\`" }
+  }
+  fields: {
+    "id":       { h: 'Id', n: "id",       r: false, t: "\`$NUMBER\`" }
+    "username": { h: 'Username', n: "username", r: true,  t: "\`$STRING\`" }
+    "owner":    { h: 'Owner', n: "owner",    r: false, t: "\`$OBJECT\`" }
+    "bio":      { h: 'Bio', n: "bio",      r: false, t: "\`$STRING\`" }
+  }
+  op: {
+    list: { name: "list", points: [ {
+      g: {}, m: "GET", o: "/account", s: [{ lit: "account" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    load: { name: "load", points: [ {
+      g: { params: [
+        { k: "param", n: "username", or: "username", r: true, t: "\`$STRING\`", ex: "u01" }
+      ] }
+      m: "GET", o: "/account/{username}", s: [{ lit: "account" }, { var: "username" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    create: { name: "create", points: [ {
+      g: { body: [
+        { k: "body", n: "username", r: true, t: "\`$STRING\`" }
+        { k: "body", n: "bio", r: false, t: "\`$STRING\`" }
+      ] }
+      m: "POST", o: "/account", s: [{ lit: "account" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    update: { name: "update", points: [ {
+      g: {
+        params: [ { k: "param", n: "username", or: "username", r: true, t: "\`$STRING\`", ex: "u01" } ]
+        body: [ { k: "body", n: "bio", r: false, t: "\`$STRING\`" } ]
+      }
+      m: "PATCH", o: "/account/{username}", s: [{ lit: "account" }, { var: "username" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    remove: { name: "remove", points: [ {
+      g: { params: [
+        { k: "param", n: "username", or: "username", r: true, t: "\`$STRING\`", ex: "u01" }
+      ] }
+      m: "DELETE", o: "/account/{username}", s: [{ lit: "account" }, { var: "username" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+  }
+}
+
+main: kit: flow: BasicAccountFlow: {
+  entity: "account", kind: "basic", name: "BasicAccountFlow"
+  step: [ { o: "list" } ]
+}
+`
+
+
+// A COMPOSITE KEY, as apidef derives for github's repo: two path parameters
+// address one record, and the response carries them elsewhere — the owner
+// inside an object, the repo under \`name\`.
+const REPO_ENTITY = `
+main: kit: entity: repo: {
+  alias: field: {}
+  name: "repo"
+  id: { field: "id", name: "id", parts: ["owner", "repo"], sep: "/", from: { owner: "owner.login", repo: "name" } }
+  field: {
+    id:          { name: "id",          kind: "field", type: "\`$STRING\`" }
+    name:        { name: "name",        kind: "field", type: "\`$STRING\`", required: true }
+    owner:       { name: "owner",       kind: "field", type: "\`$OBJECT\`" }
+    description: { name: "description", kind: "field", type: "\`$STRING\`" }
+  }
+  fields: {
+    "id":          { h: 'Id', n: "id",          r: false, t: "\`$STRING\`" }
+    "name":        { h: 'Name', n: "name",        r: true,  t: "\`$STRING\`" }
+    "owner":       { h: 'Owner', n: "owner",       r: false, t: "\`$OBJECT\`" }
+    "description": { h: 'Description', n: "description", r: false, t: "\`$STRING\`" }
+  }
+  op: {
+    list: { name: "list", points: [ {
+      g: {}, m: "GET", o: "/repos", s: [{ lit: "repos" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    load: { name: "load", points: [ {
+      g: { params: [
+        { k: "param", n: "owner", or: "owner", r: true, t: "\`$STRING\`", ex: "o01" }
+        { k: "param", n: "repo", or: "repo", r: true, t: "\`$STRING\`", ex: "r01" }
+      ] }
+      m: "GET", o: "/repos/{owner}/{repo}", s: [{ lit: "repos" }, { var: "owner" }, { var: "repo" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    create: { name: "create", points: [ {
+      g: { body: [
+        { k: "body", n: "name", r: true, t: "\`$STRING\`" }
+        { k: "body", n: "description", r: false, t: "\`$STRING\`" }
+      ] }
+      m: "POST", o: "/user/repos", s: [{ lit: "user" }, { lit: "repos" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    update: { name: "update", points: [ {
+      g: {
+        params: [
+          { k: "param", n: "owner", or: "owner", r: true, t: "\`$STRING\`", ex: "o01" }
+          { k: "param", n: "repo", or: "repo", r: true, t: "\`$STRING\`", ex: "r01" }
+        ]
+        body: [ { k: "body", n: "description", r: false, t: "\`$STRING\`" } ]
+      }
+      m: "PATCH", o: "/repos/{owner}/{repo}", s: [{ lit: "repos" }, { var: "owner" }, { var: "repo" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    remove: { name: "remove", points: [ {
+      g: { params: [
+        { k: "param", n: "owner", or: "owner", r: true, t: "\`$STRING\`", ex: "o01" }
+        { k: "param", n: "repo", or: "repo", r: true, t: "\`$STRING\`", ex: "r01" }
+      ] }
+      m: "DELETE", o: "/repos/{owner}/{repo}", s: [{ lit: "repos" }, { var: "owner" }, { var: "repo" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+  }
+}
+
+main: kit: flow: BasicRepoFlow: {
+  entity: "repo", kind: "basic", name: "BasicRepoFlow"
+  step: [ { o: "list" } ]
+}
+`
+
+
+// A PARENT PARAMETER THAT IS NOT A JAVASCRIPT IDENTIFIER. Entity names are
+// canonized; parameter names are not, so a hyphen reaches the model. The
+// entity also has create and remove but NO update, so a round-trip that
+// saved a loaded record again would create twice.
+const LEDGER_ENTITY = `
+main: kit: entity: ledger: {
+  alias: field: {}
+  name: "ledger"
+  id: { field: "id", name: "id" }
+  field: {
+    id:   { name: "id",   kind: "field", type: "\`$STRING\`", required: true }
+    memo: { name: "memo", kind: "field", type: "\`$STRING\`", required: true }
+  }
+  fields: {
+    "id":   { h: 'Id', n: "id",   r: true, t: "\`$STRING\`" }
+    "memo": { h: 'Memo', n: "memo", r: true, t: "\`$STRING\`" }
+  }
+  op: {
+    list: { name: "list", points: [ {
+      g: { params: [
+        { k: "param", n: "account-id", or: "account-id", r: true, t: "\`$STRING\`", ex: "a01" }
+      ] }
+      m: "GET", o: "/account/{account-id}/ledger"
+      s: [{ lit: "account" }, { var: "account-id" }, { lit: "ledger" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    load: { name: "load", points: [ {
+      g: { params: [
+        { k: "param", n: "account-id", or: "account-id", r: true, t: "\`$STRING\`", ex: "a01" }
+        { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "l01" }
+      ] }
+      m: "GET", o: "/account/{account-id}/ledger/{id}"
+      s: [{ lit: "account" }, { var: "account-id" }, { lit: "ledger" }, { var: "id" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    create: { name: "create", points: [ {
+      g: {
+        params: [ { k: "param", n: "account-id", or: "account-id", r: true, t: "\`$STRING\`", ex: "a01" } ]
+        body: [ { k: "body", n: "memo", r: true, t: "\`$STRING\`" } ]
+      }
+      m: "POST", o: "/account/{account-id}/ledger"
+      s: [{ lit: "account" }, { var: "account-id" }, { lit: "ledger" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    remove: { name: "remove", points: [ {
+      g: { params: [
+        { k: "param", n: "account-id", or: "account-id", r: true, t: "\`$STRING\`", ex: "a01" }
+        { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "l01" }
+      ] }
+      m: "DELETE", o: "/account/{account-id}/ledger/{id}"
+      s: [{ lit: "account" }, { var: "account-id" }, { lit: "ledger" }, { var: "id" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+  }
+}
+
+main: kit: flow: BasicLedgerFlow: {
+  entity: "ledger", kind: "basic", name: "BasicLedgerFlow"
+  step: [ { o: "list" } ]
+}
+`
+
+
+// UPDATE AND REMOVE, BUT NO CREATE: a round-trip has nothing of its own to
+// write, so none can be generated.
+const SETTING_ENTITY = `
+main: kit: entity: setting: {
+  alias: field: {}
+  name: "setting"
+  id: { field: "id", name: "id" }
+  field: {
+    id:    { name: "id",    kind: "field", type: "\`$STRING\`", required: true }
+    value: { name: "value", kind: "field", type: "\`$STRING\`", required: true }
+  }
+  fields: {
+    "id":    { h: 'Id', n: "id",    r: true, t: "\`$STRING\`" }
+    "value": { h: 'Value', n: "value", r: true, t: "\`$STRING\`" }
+  }
+  op: {
+    load: { name: "load", points: [ {
+      g: { params: [
+        { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "s01" }
+      ] }
+      m: "GET", o: "/setting/{id}", s: [{ lit: "setting" }, { var: "id" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    update: { name: "update", points: [ {
+      g: {
+        params: [ { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "s01" } ]
+        body: [ { k: "body", n: "value", r: false, t: "\`$STRING\`" } ]
+      }
+      m: "PUT", o: "/setting/{id}", s: [{ lit: "setting" }, { var: "id" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    remove: { name: "remove", points: [ {
+      g: { params: [
+        { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "s01" }
+      ] }
+      m: "DELETE", o: "/setting/{id}", s: [{ lit: "setting" }, { var: "id" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+  }
+}
+
+main: kit: flow: BasicSettingFlow: {
+  entity: "setting", kind: "basic", name: "BasicSettingFlow"
+  step: [ { o: "load", i: {
+    ref: "setting_ref01", srcdatavar: "setting_ref01_data", suffix: "_dt0" } } ]
+}
+`
+
+
+// CREATE NEEDS A PARENT THE UPDATE DOES NOT: a project is created inside an
+// org and addressed by its own id from then on. The guard for \`org\` belongs
+// to the create branch alone.
+const PROJECT_ENTITY = `
+main: kit: entity: project: {
+  alias: field: {}
+  name: "project"
+  id: { field: "id", name: "id" }
+  field: {
+    id:    { name: "id",    kind: "field", type: "\`$STRING\`", required: true }
+    title: { name: "title", kind: "field", type: "\`$STRING\`", required: true }
+  }
+  fields: {
+    "id":    { h: 'Id', n: "id",    r: true, t: "\`$STRING\`" }
+    "title": { h: 'Title', n: "title", r: true, t: "\`$STRING\`" }
+  }
+  op: {
+    load: { name: "load", points: [ {
+      g: { params: [
+        { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "p01" }
+      ] }
+      m: "GET", o: "/project/{id}", s: [{ lit: "project" }, { var: "id" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    create: { name: "create", points: [ {
+      g: {
+        params: [ { k: "param", n: "org", or: "org", r: true, t: "\`$STRING\`", ex: "o01" } ]
+        body: [ { k: "body", n: "title", r: true, t: "\`$STRING\`" } ]
+      }
+      m: "POST", o: "/org/{org}/project", s: [{ lit: "org" }, { var: "org" }, { lit: "project" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    update: { name: "update", points: [ {
+      g: {
+        params: [ { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "p01" } ]
+        body: [ { k: "body", n: "title", r: false, t: "\`$STRING\`" } ]
+      }
+      m: "PATCH", o: "/project/{id}", s: [{ lit: "project" }, { var: "id" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    remove: { name: "remove", points: [ {
+      g: { params: [
+        { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "p01" }
+      ] }
+      m: "DELETE", o: "/project/{id}", s: [{ lit: "project" }, { var: "id" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+  }
+}
+
+main: kit: flow: BasicProjectFlow: {
+  entity: "project", kind: "basic", name: "BasicProjectFlow"
+  step: [ { o: "load", i: {
+    ref: "project_ref01", srcdatavar: "project_ref01_data", suffix: "_dt0" } } ]
+}
+`
+
+
+// The generated TypeScript SDK, compiled and loaded, so a provider can be
+// driven against the SDK's own offline mock transport rather than a stand-in.
+// The SDK has no runtime dependencies; only the type roots are borrowed.
+function compileSdk(files) {
+  const dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'infrapack-sdk-'))
+  for (const [p, content] of Object.entries(files)) {
+    if (p.startsWith('ts/src/')) {
+      const dest = Path.join(dir, p.slice('ts/'.length))
+      Fs.mkdirSync(Path.dirname(dest), { recursive: true })
+      Fs.writeFileSync(dest, content)
+    }
+  }
+  execFileSync(process.execPath, [
+    Path.join(PKG, 'node_modules', 'typescript', 'bin', 'tsc'),
+    '-p', Path.join(dir, 'src', 'tsconfig.json'),
+    '--typeRoots', Path.join(PKG, 'node_modules', '@types'),
+    '--noCheck', '--sourceMap', 'false',
+  ], { cwd: PKG, stdio: 'inherit' })
+  return { dir, module: require(Path.join(dir, 'dist', 'DemoSDK.js')) }
+}
+
+
 // Generated providers exist only during the test; compile them via npm too.
 function compileProvider(src) {
   const dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'infrapack-provider-'))
@@ -459,7 +765,7 @@ function compileProvider(src) {
 // things is enough to call one of those functions directly, with a recording
 // SDK in `this.shared.sdk` — no Seneca, no SDK, no server, and the code under
 // test is the emitted source rather than a paraphrase of it.
-function loadProvider(files, name) {
+function loadProvider(files, name, sdkModule) {
   const path = Object.keys(files).find((p) => p.endsWith(`src/${name}.ts`))
   ok(null != path, 'no provider source generated:\n  ' +
     Object.keys(files).join('\n  '))
@@ -467,9 +773,10 @@ function loadProvider(files, name) {
   const js = compileProvider(String(files[path]))
 
   const stub = { version: '0.0.0' }
-  const req = (p) => p.endsWith('package.json') ? stub : new Proxy({}, {
-    get: () => class Stub { },
-  })
+  const req = (p) => p.endsWith('package.json') ? stub :
+    null != sdkModule ? sdkModule : new Proxy({}, {
+      get: () => class Stub { },
+    })
 
   const mod = { exports: {} }
   new Function('exports', 'require', 'module', js)(mod.exports, req, mod)
@@ -492,15 +799,17 @@ function loadProvider(files, name) {
 
 
 // A recording stand-in for the SDK: every call is captured as
-// [accessor, op, argument], and nothing else happens.
-function recordingSdk(calls) {
+// [accessor, op, argument], and nothing else happens. `respond` shapes the
+// answer, for a test about what the provider does with a response.
+function recordingSdk(calls, respond) {
   return new Proxy({}, {
     get: (_t, acc) => () => new Proxy({}, {
       get: (_t2, op) => async (arg) => {
         calls.push([String(acc), String(op), arg])
+        const data = null != respond ? respond(String(acc), String(op), arg) : { id: 'r0' }
         // `list` resolves to a list of SDK entities, everything else to one.
         return 'list' === String(op) ?
-          [{ data: () => ({ id: 'r0' }) }] : { data: () => ({ id: 'r0' }) }
+          [{ data: () => data }] : { data: () => data }
       },
     }),
   })
@@ -508,8 +817,8 @@ function recordingSdk(calls) {
 
 
 // Drive one generated cmd action.
-function drive(entity, entname, cmd, msg, calls) {
-  const self = { shared: { sdk: recordingSdk(calls) } }
+function drive(entity, entname, cmd, msg, calls, respond) {
+  const self = { shared: { sdk: recordingSdk(calls, respond) } }
   return entity[entname].cmd[cmd].action.call(self, (d) => d, msg)
 }
 
@@ -523,14 +832,14 @@ function saveMsg(data, extra) {
 }
 
 
-function consumerModel(sdk, extra) {
+function consumerModel(sdk, extra, api = API) {
   const src = [
     '@"@voxgig/apidef/model/apidef.aon"',
     '@"@voxgig/sdkgen/model/sdkgen.aon"',
     '@"target/target-index.aon"',
     '@"feature/feature-index.aon"',
     "name: 'demo'",
-    API,
+    api,
     extra || '',
   ].join('\n')
 
@@ -1473,6 +1782,169 @@ describe('seneca-provider target, from its package', () => {
   })
 
 
+  // THE RECORD KEY, when the API does not call it `id`. Seneca's entity id
+  // has to be what the API addresses the record by, whatever the response
+  // happens to carry under `id`, and a write has to address that record.
+  describe('record keys', () => {
+
+    let entity
+    let files
+    let sdk
+
+    before(async () => {
+      const out = await generateInto(consumer, {
+        model: consumerModel(consumer.sdk,
+          ACCOUNT_ENTITY + REPO_ENTITY + LEDGER_ENTITY + SETTING_ENTITY +
+          PROJECT_ENTITY + PARENT_ACTION_ENTITY),
+      })
+      files = out.files
+      sdk = compileSdk(files)
+      entity = loadProvider(files, 'demo-provider', sdk.module)
+    })
+
+    after(() => {
+      if (null != sdk) Fs.rmSync(sdk.dir, { recursive: true, force: true })
+    })
+
+
+    // github's user answers `GET /users/{username}` with `login` and a
+    // numeric `id`, and no `username` at all. The key the request used is
+    // the only source of the entity's id.
+    test('a load carries the request key across, over an unrelated id', async () => {
+      const calls = []
+      const got = await drive(entity, 'account', 'load',
+        { q: { id: 'voxgig' }, ent: {} }, calls,
+        () => ({ id: 123456789, login: 'voxgig' }))
+
+      deepStrictEqual(calls, [['Account', 'load', { username: 'voxgig' }]])
+      strictEqual(got.id, 'voxgig')
+      strictEqual(got.demo_id, 123456789)
+    })
+
+
+    // The write body carries the key under the API's own name. Seneca's `id`
+    // is not a field of this API's account, and the parked API id is not
+    // writable; neither may travel.
+    test('a save addresses the record by the API key and sends neither id', async () => {
+      const calls = []
+      await drive(entity, 'account', 'save',
+        saveMsg({ id: 'voxgig', bio: 'hello', demo_id: 123456789 }), calls)
+
+      strictEqual(calls.length, 1)
+      strictEqual(calls[0][1], 'update')
+      deepStrictEqual(calls[0][2], { username: 'voxgig', bio: 'hello' })
+    })
+
+
+    // The whole cycle against the SDK's own mock, on a record whose API id
+    // and key differ, as they do for every github user.
+    test('load-modify-save on an account keyed by username changes that record',
+      async () => {
+        const client = sdk.module.DemoSDK.test({ entity: { account: {} } })
+        await client.Account().create({
+          id: 123456789, username: 'voxgig', owner: { login: 'voxgig' }, bio: 'first',
+        })
+
+        const self = { shared: { sdk: client } }
+        const entize = (d) => d
+        const load = () => entity.account.cmd.load.action
+          .call(self, entize, { q: { id: 'voxgig' }, ent: {} })
+
+        const loaded = await load()
+        strictEqual(loaded.id, 'voxgig')
+        strictEqual(loaded.demo_id, 123456789)
+
+        loaded.bio = 'second'
+        const saved = await entity.account.cmd.save.action
+          .call(self, entize, { q: {}, ent: { data$: () => ({ ...loaded }) } })
+
+        strictEqual(saved.id, 'voxgig')
+        strictEqual(saved.bio, 'second')
+        deepStrictEqual(saved.owner, { login: 'voxgig' })
+
+        const again = await load()
+        strictEqual(again.bio, 'second')
+        strictEqual(again.demo_id, 123456789)
+
+        const all = await entity.account.cmd.list.action
+          .call(self, entize, { q: {}, ent: {} })
+        strictEqual(all.length, 1, 'the save created a second record')
+      })
+
+
+    // A composite key: the parts go in the match, the body stays as loaded,
+    // and the save is an UPDATE of the record that was loaded.
+    test('load-modify-save on a composite repo updates in place', async () => {
+      const client = sdk.module.DemoSDK.test({ entity: { repo: {} } })
+      await client.Repo().create({
+        id: 'r-api-id', name: 'sdkgen', owner: { login: 'voxgig' }, description: 'first',
+      })
+
+      const self = { shared: { sdk: client } }
+      const entize = (d) => d
+      const load = () => entity.repo.cmd.load.action
+        .call(self, entize, { q: { id: 'voxgig/sdkgen' }, ent: {} })
+
+      const loaded = await load()
+      strictEqual(loaded.id, 'voxgig/sdkgen')
+
+      loaded.description = 'second'
+      const saved = await entity.repo.cmd.save.action
+        .call(self, entize, { q: {}, ent: { data$: () => ({ ...loaded }) } })
+
+      strictEqual(saved.id, 'voxgig/sdkgen')
+      strictEqual(saved.description, 'second')
+      deepStrictEqual(saved.owner, { login: 'voxgig' })
+
+      strictEqual((await load()).description, 'second')
+
+      const all = await entity.repo.cmd.list.action
+        .call(self, entize, { q: {}, ent: {} })
+      strictEqual(all.length, 1, 'the save created a second record')
+    })
+
+
+    // A response can carry an OBJECT under a path parameter's name. Sent as
+    // a URL segment that is `[object Object]`, which may resolve to a real
+    // resource; refused instead.
+    test('an object where a path parameter belongs is refused', async () => {
+      const calls = []
+      let err = null
+
+      try {
+        await drive(entity, 'meeting', 'save',
+          saveMsg({ id: 'm1', user_id: { login: 'u1' }, topic: 't' }), calls)
+      }
+      catch (e) { err = e }
+
+      ok(null != err, 'an object was accepted as a path parameter')
+      ok(/user_id must be a single value/.test(err.message), err.message)
+      deepStrictEqual(calls, [])
+    })
+
+
+    // Each save branch guards the keys of ITS route. A project is created
+    // inside an org and updated by its own id, so an update without `org`
+    // is fine and a create without it is not.
+    test('a save guards the parent keys of the branch it takes', async () => {
+      const calls = []
+      await drive(entity, 'project', 'save',
+        saveMsg({ id: 'p1', title: 'renamed' }), calls)
+      deepStrictEqual(calls, [['Project', 'update', { id: 'p1', title: 'renamed' }]])
+
+      let err = null
+      try {
+        await drive(entity, 'project', 'save', saveMsg({ title: 'new' }), [])
+      }
+      catch (e) { err = e }
+      ok(null != err, 'a create without its parent key went out')
+      ok(/org is required/.test(err.message), err.message)
+    })
+
+
+  })
+
+
   // `cmdActions` — which SDK op serves each action of one cmd.
   describe('cmdActions', () => {
 
@@ -1616,6 +2088,35 @@ describe('seneca-provider target, from its package', () => {
       }
 
       strictEqual(recordKey(ent), 'id')
+    })
+
+    // A load route ending in a literal names a facet of the record, so its
+    // parameter is only a last resort: the remove route's terminal parameter
+    // is the key, as it is for the SDK's mock transport.
+    test('a literal-terminal load route defers to an op that ends in a parameter', () => {
+      const ent = {
+        name: 'registry',
+        fields: {},
+        op: {
+          load: {
+            points: [{
+              s: [{ lit: 'orgs' }, { var: 'org' }, { lit: 'registry' }, { lit: 'public-key' }],
+              g: { params: { org: { n: 'org', r: true } } },
+            }],
+          },
+          remove: {
+            points: [{
+              s: [{ lit: 'orgs' }, { var: 'org' }, { lit: 'registry' }, { var: 'registry_id' }],
+              g: { params: { org: { n: 'org', r: true }, registry_id: { n: 'registry_id', r: true } } },
+            }],
+          },
+        },
+      }
+
+      strictEqual(recordKey(ent), 'registry_id')
+
+      delete ent.op.remove
+      strictEqual(recordKey(ent), 'org')
     })
   })
 
