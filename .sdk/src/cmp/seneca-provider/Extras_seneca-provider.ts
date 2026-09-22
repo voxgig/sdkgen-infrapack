@@ -80,10 +80,56 @@ function parentSeed(e: any, key: string): string {
 }
 
 
+// A parameter name as a local variable: an API definition can hyphenate.
+function paramVar(p: string): string {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(p) ? p :
+    'p_' + p.replace(/[^A-Za-z0-9_$]/g, '_')
+}
+
+
+function regexLiteral(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&')
+}
+
+
+// `key: value` for one parent, from the live variable or the seed.
+function parentPair(e: any, p: string, live: boolean): string {
+  if (!live) {
+    return `${jsKey(p)}: '${parentSeed(e, p)}', `
+  }
+  const v = paramVar(p)
+  return v === p ? `${p}, ` : `${jsKey(p)}: ${v}, `
+}
+
+
 function parentPairs(e: any, live: boolean): string {
-  return e.parents
-    .map((p: string) => live ? `${p}, ` : `${p}: '${parentSeed(e, p)}', `)
-    .join('')
+  return e.parents.map((p: string) => parentPair(e, p, live)).join('')
+}
+
+
+// A field the record owns: not the API's key, not Seneca's id, not a parent.
+function ownField(e: any, f: any): boolean {
+  return f.name !== e.rk && 'id' !== f.name && !e.parents.includes(f.name)
+}
+
+
+// Where a configured `apikey` goes on the wire, from the model's security
+// declaration. Empty for an API that declares no authentication.
+function credentialWire(provider: any): string {
+  if (!provider.authActive) {
+    return ''
+  }
+  if (provider.authBasic) {
+    return `\`${provider.authName}: Basic <base64 of apikey:secret>\``
+  }
+  const prefix = '' === provider.authPrefix ? '' : provider.authPrefix + ' '
+  if ('header' === provider.authIn) {
+    return `\`${provider.authName}: ${prefix}<apikey>\``
+  }
+  if ('query' === provider.authIn) {
+    return `the \`${provider.authName}\` query parameter`
+  }
+  return `the \`${provider.authName}\` ${provider.authIn}`
 }
 
 
@@ -161,9 +207,7 @@ function queryPairs(e: any, live: boolean): string {
 
   const rest = e.parents.filter((p: string) => !parts.includes(p))
 
-  return rest
-    .map((p: string) => live ? `${p}, ` : `${p}: '${parentSeed(e, p)}', `)
-    .join('')
+  return rest.map((p: string) => parentPair(e, p, live)).join('')
 }
 
 
@@ -228,7 +272,7 @@ ${ind}    .list\$()
 
 ${ind}  if (0 === ${pv}.length) return t.skip('no ${pe.name} to attach a ${e.name} to')
 
-${ind}  const ${p} = ${pv}[0].${pe.idf || 'id'}
+${ind}  const ${paramVar(p)} = ${pv}[0].id
 
 `
   }).join('')
@@ -241,8 +285,7 @@ ${ind}  const ${p} = ${pv}[0].${pe.idf || 'id'}
 // is dropped rather than asserted vacuously.
 function mutableField(e: any): string {
   const f = (e.fields || []).find((f: any) =>
-    f.name !== e.idf && 'id' !== f.name &&
-    !e.parents.includes(f.name) && 'string' === f.kind)
+    ownField(e, f) && 'string' === f.kind)
 
   return f ? f.name : ''
 }
@@ -258,14 +301,16 @@ function crudTest(provider: any, e: any, mode: 'offline' | 'live'): string {
   // query and entity always spell the id `id`. The provider translates to
   // whatever the API calls it.
   const idf = 'id'
-  const mut = mutableField(e)
+  // The update leg needs a route that updates one record; without one a
+  // save on a loaded entity would create again.
+  const mut = e.canonicalOps.includes('update') && !cmdRefuses(e, 'update') ?
+    mutableField(e) : ''
 
   const ind = live ? '    ' : '  '
   const mk = live ? 'makeSeneca(liveOpts())' : 'makeSeneca()'
   const setup = live ? liveParentSetup(provider, e, ind) : ''
 
-  const made = 0 < e.fields.filter((f: any) =>
-    f.name !== idf && 'id' !== f.name && !e.parents.includes(f.name)).length ?
+  const made = 0 < e.fields.filter((f: any) => ownField(e, f)).length ?
     seedLiteral(e, 'crud') : ''
 
   const idmake = 0 === idPartsOf(e).length ? '' :
@@ -354,8 +399,7 @@ function fieldLiteral(f: any, tag: string): string {
 // shares with the seed.
 function seedLiteral(e: any, tag: string): string {
   return (e.fields || [])
-    .filter((f: any) =>
-      f.name !== e.idf && 'id' !== f.name && !e.parents.includes(f.name))
+    .filter((f: any) => ownField(e, f))
     .map((f: any) => `${jsKey(f.name)}: ${fieldLiteral(f, tag)}`)
     .join(', ')
 }
@@ -612,7 +656,7 @@ describe('${provider.fileBase}', () => {
       .entity('provider/${provider.lower}/${e.name}')
       .load$('${entIdLiteral(e, '0')}')
 
-    assert.equal(found.${e.idf || 'id'}, '${entIdLiteral(e, '0')}')
+    assert.equal(found.id, '${entIdLiteral(e, '0')}')
     assert.equal(
       found.canon$({ string: true }),
       'provider/${provider.lower}/${e.name}',
@@ -653,7 +697,7 @@ describe('${provider.fileBase}', () => {
           // syntax error ("Invalid regular expression flags"). Escape every
           // regex metacharacter, not just the slash, so a future separator
           // cannot reintroduce this.
-          const shapeRe = shape.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&')
+          const shapeRe = regexLiteral(shape)
           const cmd = ['load', 'remove', 'update'].find((op: string) =>
             e.cmds.includes('remove' === op ? 'remove' : 'load' === op ? 'load' : 'save'))
 
@@ -682,7 +726,7 @@ describe('${provider.fileBase}', () => {
 
         const key = e.parents[0]
         const pairs = e.parents
-          .map((k: string) => `${k}: '${parentSeed(e, k)}'`).join(', ')
+          .map((k: string) => `${jsKey(k)}: '${parentSeed(e, k)}'`).join(', ')
 
         const guardOp = ['list', 'load', 'update', 'remove']
           .find((op: string) => (e.opParents[op] || []).includes(key) &&
@@ -704,7 +748,7 @@ describe('${provider.fileBase}', () => {
 
     await assert.rejects(
       () => seneca.entity('provider/${provider.lower}/${e.name}').${call},
-      /${key} is required/,
+      /${regexLiteral(key)} is required/,
     )
   })
 
@@ -725,7 +769,7 @@ describe('${provider.fileBase}', () => {
     )
     ${0 < idPartsOf(e).length ?
       `assert.equal(list[0].id, '${entIdLiteral(e, '0')}')` :
-      `assert.equal(list[0].${key}, '${parentSeed(e, key)}')`}
+      `assert.equal(${jsProp('list[0]', key)}, '${parentSeed(e, key)}')`}
   })
 
 `)
@@ -770,7 +814,16 @@ ${!loadHasKey(e) ? '' : `
       // transport implements create/update/remove, so this needs no server.
       each(provider.entities, (e: any) => {
         if (e.cmds.includes('save') && e.cmds.includes('remove')) {
-          if (compositeRoundTrip(e) && removeAddresses(e) &&
+          if (!e.canonicalOps.includes('create')) {
+            Content(`
+  // NO ${e.name} create/update/remove round-trip: THIS API HAS NO CREATE
+  // ROUTE FOR A ${e.name}, so there is no record of this test's own to
+  // update and remove. The update and remove cmds are still exercised
+  // through the guard and refusal tests above.
+
+`)
+          }
+          else if (compositeRoundTrip(e) && removeAddresses(e) &&
             !cmdRefuses(e, 'update')) {
             Content(`
 ` + crudTest(provider, e, 'offline'))
@@ -977,17 +1030,25 @@ ${!loadHasKey(e) ? '' : `
 
 `)
         }
-        if (subject.cmds.includes('load')) {
+        // A nested subject needs its parent ids from the server, and a
+        // composite one an id built from them; neither is available to a
+        // literal, so the missing-record read is emitted only where it can
+        // address something.
+        if (subject.cmds.includes('load') && 0 === idPartsOf(subject).length &&
+          liveParentsResolvable(provider, subject)) {
+          const missing = 0 === subject.parents.length ?
+            `'nosuch${subject.name}'` :
+            `{ ${queryPairs(subject, true)}id: 'nosuch${subject.name}' }`
           Content(`    // A read of something that is not there is \`null\`, live as well as
     // offline: the provider's 404 handling is the same code path either way.
     it('${subject.name}-load-missing', async (t) => {
       if (!live) return t.skip(noServer())
       const seneca = await makeSeneca(liveOpts())
 
-      assert.equal(
+${liveParentSetup(provider, subject, '    ')}      assert.equal(
         await seneca
           .entity('provider/${provider.lower}/${subject.name}')
-          .load$('nosuch${subject.name}'),
+          .load$(${missing}),
         null,
       )
     })
@@ -997,6 +1058,7 @@ ${!loadHasKey(e) ? '' : `
 
         each(provider.entities, (e: any) => {
           if (e.cmds.includes('save') && e.cmds.includes('remove') &&
+            e.canonicalOps.includes('create') &&
             liveParentsResolvable(provider, e) && compositeRoundTrip(e)) {
             Content(crudTest(provider, e, 'live'))
           }
@@ -1177,7 +1239,7 @@ async function run() {
           Content(`  // ${e.name}: needs ${e.parents.join(', ')}; no listable parent to take
   // one from, so supply it yourself:
   //   await seneca.entity('provider/${provider.lower}/${e.name}')
-  //     .list$({ ${e.parents.map((k: string) => `${k}: '...'`).join(', ')} })
+  //     .list$({ ${e.parents.map((k: string) => `${jsKey(k)}: '...'`).join(', ')} })
 
 `)
           return
@@ -1191,7 +1253,7 @@ async function run() {
   if (0 < ${parent.name}s.length) {
     console.log('${e.name.toUpperCase()}', await seneca
       .entity('provider/${provider.lower}/${e.name}')
-      .list$({ ${key}: ${parent.name}s[0].${parent.idf || 'id'} }))
+      .list$({ ${jsKey(key)}: ${parent.name}s[0].id }))
   }
 
 `)
@@ -1204,10 +1266,8 @@ async function run() {
     // The write cycle, kept separate: it MUTATES the server, so it is not
     // something to run by reflex. It cleans up after itself.
     if (subject.cmds.includes('save') && subject.cmds.includes('remove')) {
-      const idf = subject.idf || 'id'
-      const writable = subject.fields
-        .filter((f: any) => f.name !== idf && f.name !== 'id')
-        .filter((f: any) => !subject.parents.includes(f.name))
+      const idf = 'id'
+      const writable = subject.fields.filter((f: any) => ownField(subject, f))
 
       const make = writable
         .map((f: any) => `${jsKey(f.name)}: ${fieldLiteral(f, 'quick')}`)
@@ -1272,10 +1332,9 @@ async function run() {
 
         if (null != child) {
           const ckey = child.parents[0]
-          const cidf = child.idf || 'id'
+          const cidf = 'id'
           const cmake = (child.fields || [])
-            .filter((f: any) =>
-              f.name !== cidf && 'id' !== f.name && !child.parents.includes(f.name))
+            .filter((f: any) => ownField(child, f))
             .map((f: any) => `${jsKey(f.name)}: ${fieldLiteral(f, 'quick')}`)
             .join(', ')
 
@@ -1283,13 +1342,13 @@ async function run() {
     // goes under the ${subject.name} just created — and comes back off again.
     const ${child.name} = await seneca
       .entity('provider/${provider.lower}/${child.name}')
-      .make$({ ${ckey}: id${'' === cmake ? '' : ', ' + cmake} })
+      .make$({ ${jsKey(ckey)}: id${'' === cmake ? '' : ', ' + cmake} })
       .save$()
     console.log('${child.name.toUpperCase()} CREATED', ${child.name})
 
     await seneca
       .entity('provider/${provider.lower}/${child.name}')
-      .remove$({ ${ckey}: id, ${cidf}: ${child.name}.${cidf} })
+      .remove$({ ${jsKey(ckey)}: id, ${cidf}: ${child.name}.${cidf} })
     console.log('${child.name.toUpperCase()} REMOVED')
 
 `)
@@ -1675,7 +1734,7 @@ await seneca.ready()
           null != subject.idsep && '' !== String(subject.idsep) ?
             String(subject.idsep) : '/')}'` :
         0 === subject.parents.length ? `'some-id'` :
-          `{ ` + subject.parents.map((p: string) => `${p}: 'some-${p}'`).join(', ') +
+          `{ ` + subject.parents.map((p: string) => `${jsKey(p)}: 'some-${p}'`).join(', ') +
           `, id: 'some-id' }`
       Content(`const ${subject.name} = await seneca
   .entity('provider/${provider.lower}/${subject.name}').load$(${loadArg})
@@ -1959,7 +2018,7 @@ const DocTutorial = cmp(function DocTutorial(props: any) {
     .sort((a: any, b: any) =>
       (a.parents.length - b.parents.length) || (b.cmds.length - a.cmds.length))[0]
 
-  const idf = subject.idf || 'id'
+  const idf = 'id'
   const subjParent = 0 < subject.parents.length ?
     entOf(subject.parentEntity) : null
 
@@ -1993,19 +2052,14 @@ const DocTutorial = cmp(function DocTutorial(props: any) {
 
   // The value seedRecord() gives a parent key, so a query written here finds
   // the seeded record instead of quietly matching nothing.
-  const seedParentVal = (e: any, k: string) => {
-    const f = (e.fields || []).find((f: any) => f.name === k)
-    const pe = (null != f && '' !== f.parentEntity) ? f.parentEntity :
-      (k === e.parents[0] ? (e.parentEntity || '') : '')
-    return `${pe}0`
-  }
+  const seedParentVal = (e: any, k: string) => parentSeed(e, k)
 
   // A seed record guaranteed to carry its id and its parent keys.
   // seedRecord() emits only the fields the model marks required, and a record
   // missing its parent key is invisible to the very query this lesson makes.
   const demoRecord = (e: any, idx: number) => {
     const rec: any = seedRecord(e, idx)
-    const eidf = e.idf || 'id'
+    const eidf = e.rk || 'id'
     if (null == rec[eidf]) {
       rec[eidf] = `${e.name}${idx}`
     }
@@ -2055,13 +2109,12 @@ const DocTutorial = cmp(function DocTutorial(props: any) {
   const ${plural(subjParent.name)} = await seneca
     .entity('${canon(subjParent.name)}')
     .list$()
-  const ${ident(subject.parents[0])} = ${plural(subjParent.name)}[0].${subjParent.idf || 'id'}
+  const ${ident(subject.parents[0])} = ${plural(subjParent.name)}[0].id
 
 ` : ''
 
   // Fields worth printing, and worth writing: not the id, not a parent key.
-  const plainFields = subject.fields.filter((f: any) =>
-    f.name !== idf && 'id' !== f.name && !subject.parents.includes(f.name))
+  const plainFields = subject.fields.filter((f: any) => ownField(subject, f))
   const shown = plainFields.slice(0, 2)
   const litval = (f: any, alt: boolean) =>
     'number' === f.kind ? (alt ? '4321' : '1234') :
@@ -2287,8 +2340,9 @@ You should see:
 \`\`\`
 
 Two details of that configuration are worth a moment. The \`apikey\` is
-declared even though nothing here asks for credentials — an empty
-value simply means no \`authorization\` header is sent. Every Seneca
+declared even though nothing here asks for credentials — ${provider.authActive ?
+      'an empty\nvalue simply means no credential is sent' :
+      'this API declares\nno authentication, so the value is never read'}. Every Seneca
 provider is configured the same way, so an application that later moves
 to an authenticated service changes one value rather than its shape.
 And \`get:info\` is answered by the plugin itself, without calling the
@@ -2455,7 +2509,7 @@ They behave the same way on every entity this plugin exposes.
 
     if (null != child) {
       const ckey = child.parents[0]
-      const cidf = child.idf || 'id'
+      const cidf = 'id'
       const cparent = null == childParent ? 'their parent' :
         `${childParent.name} records`
       const cop = child.cmds.includes('list') ? 'list' : 'load'
@@ -2472,7 +2526,7 @@ They behave the same way on every entity this plugin exposes.
         `  const ${plural(childParent.name)} = await seneca
     .entity('${canon(childParent.name)}')
     .list$()
-  const ${ident(ckey)} = ${plural(childParent.name)}[0].${childParent.idf || 'id'}
+  const ${ident(ckey)} = ${plural(childParent.name)}[0].id
 
 ` : ''
 
@@ -2630,19 +2684,20 @@ const DocHowto = cmp(function DocHowto(props: any) {
   }
 
   const canon = (e: any) => `provider/${provider.lower}/${e.name}`
-  const idf = (e: any) => e.idf || 'id'
+
+  // Seneca's key, on every entity: the provider translates it to whatever
+  // the API calls it. `apiKey` is that name, for the SDK-direct examples.
+  const idf = (_e: any) => 'id'
+  const apiKey = (e: any) => e.rk || 'id'
 
   // A parent key's example value. This MIRRORS seedRecord rather than
   // inventing something more readable: the offline recipe below seeds with
   // seedRecord, and an example id that does not match what was seeded turns
   // every other recipe into a lookup that answers null.
-  const parentVal = (e: any, k: string) => {
-    const f = e.fields.find((f: any) => f.name === k)
-    return null == f ? `${k.replace(/_id$/, '')}0` : `${f.parentEntity}0`
-  }
+  const parentVal = (e: any, k: string) => parentSeed(e, k)
 
   const parentArgs = (e: any) =>
-    e.parents.map((k: string) => `${k}: '${parentVal(e, k)}'`).join(', ')
+    e.parents.map((k: string) => `${jsKey(k)}: '${parentVal(e, k)}'`).join(', ')
 
   // A query naming ONE record. A top-level entity takes the bare id string;
   // a nested one cannot, because it is identified by the whole set of keys.
@@ -2654,8 +2709,8 @@ const DocHowto = cmp(function DocHowto(props: any) {
 
   // The SDK's own entity ops always take an object, even for a bare id.
   const sdkLoadArgs = (e: any) => 0 === e.parents.length ?
-    `{ ${idf(e)}: '${e.name}0' }` :
-    `{ ${parentArgs(e)}, ${idf(e)}: '${e.name}0' }`
+    `{ ${jsKey(apiKey(e))}: '${e.name}0' }` :
+    `{ ${parentArgs(e)}, ${jsKey(apiKey(e))}: '${e.name}0' }`
 
   const key = (k: string) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k) ? k : `'${k}'`
 
@@ -2685,13 +2740,12 @@ const DocHowto = cmp(function DocHowto(props: any) {
   // the data rather than the query.
   const createData = (e: any) => {
     const rec = seedRecord(e, 0)
-    delete rec[idf(e)]
+    delete rec[apiKey(e)]
     delete rec.id
     return rec
   }
 
-  const changeable = (e: any) => e.fields.find((f: any) =>
-    f.name !== idf(e) && 'id' !== f.name && !e.parents.includes(f.name))
+  const changeable = (e: any) => e.fields.find((f: any) => ownField(e, f))
 
   const newValue = (f: any) => 'number' === f.kind ? '999' :
     'boolean' === f.kind ? 'true' : `'${f.name}-changed'`
@@ -2750,9 +2804,10 @@ const ${eLoad.name} = await seneca
   .entity('${canon(eLoad)}')
   .load$(${oneArgs(eLoad)})
 \`\`\`
-${'id' === idf(eLoad) ? '' : `
-The id field for \`${eLoad.name}\` is \`${idf(eLoad)}\`, so that is the
-key to supply.
+${'id' === apiKey(eLoad) ? '' : `
+The API addresses \`${eLoad.name}\` records by \`${apiKey(eLoad)}\`; the
+provider carries that value as the entity's \`id\`, so the query is the
+same as for any other entity.
 `}
 A record that is not there comes back as \`null\`. It is not an error and
 it does not throw, so test the value rather than wrapping the call:
@@ -2969,28 +3024,59 @@ companion test server listens, so local development usually needs no
 \`base\` at all.`}`)
 
 
-  sec('Send an API key', `Credentials are not a plugin option: they come through the provider
-convention, so that every provider in an application is configured the
-same way. Declare the variable with \`env\` and set the key under this
-provider's name:
+  if (!provider.authActive) {
+    sec('Send an API key', `The ${provider.api} definition declares no authentication, so this plugin
+reads no key and adds no credential to any request. The \`apikey\` entry in
+the provider configuration is the convention's shape, and stays empty:
 
 \`\`\`js
-  .use('env', {
-    var: { $${provider.ENV}_APIKEY: String },
-  })
   .use('provider', {
     provider: {
       ${provider.lower}: {
         keys: {
-          apikey: { value: '$${provider.ENV}_APIKEY' },
+          apikey: { value: '' },
         },
       },
     },
   })
 \`\`\`
 
-Every request then carries \`authorization: Bearer <apikey>\`. An absent
-or empty key adds no header at all, so an API that needs no credentials
+To send a header the definition does not describe, supply it through
+\`sdk\`; it goes on every request as given:
+
+\`\`\`js
+.use('${provider.pkgName}', {
+  sdk: { headers: { 'x-api-key': process.env.${provider.ENV}_APIKEY } },
+})
+\`\`\``)
+  }
+  else {
+    sec('Send an API key', `Credentials are not a plugin option: they come through the provider
+convention, so that every provider in an application is configured the
+same way. Declare the variable with \`env\` and set the key under this
+provider's name:
+
+\`\`\`js
+  .use('env', {
+    var: { $${provider.ENV}_APIKEY: String${provider.authBasic ?
+        `, $${provider.ENV}_SECRET: String` : ''} },
+  })
+  .use('provider', {
+    provider: {
+      ${provider.lower}: {
+        keys: {
+          apikey: { value: '$${provider.ENV}_APIKEY' },${provider.authBasic ? `
+          secret: { value: '$${provider.ENV}_SECRET' },` : ''}
+        },
+      },
+    },
+  })
+\`\`\`
+
+Every request then carries ${credentialWire(provider)}.${provider.authBasic ? `
+HTTP Basic needs the pair: with either \`apikey\` or \`secret\` missing, no
+credential is sent.` : ''} An absent
+or empty key sends no credential at all, so an API that needs none
 is configured in exactly the same shape with an empty value — which is
 why it is worth writing even when there is nothing to send. An
 application that later moves to an authenticated service then changes one
@@ -3004,6 +3090,7 @@ For a different scheme, set the header yourself. Headers supplied through
   sdk: { headers: { 'x-api-key': process.env.${provider.ENV}_APIKEY } },
 })
 \`\`\``)
+  }
 
 
   sec('Check which plugin and SDK are running', `One message, and the thing to reach for when a deployment is behaving
@@ -3032,7 +3119,7 @@ released separately and most surprises live in the gap between them.`)
     const dpe = eList || subject
     const dpath = dpe.path || provider.probePath || '/'
     const dparams = pathParams(dpath)
-    const dval = (k: string) => (k === idf(dpe) || 'id' === k) ?
+    const dval = (k: string) => (k === apiKey(dpe) || 'id' === k) ?
       `${dpe.name}0` : `${k.replace(/_id$/, '')}0`
 
     sec('Reach the SDK directly', `The entity API covers the operations the API model declares. For
@@ -3305,12 +3392,14 @@ const DocReference = cmp(function DocReference(props: any) {
   // A query literal for the docs: parent keys first, then whatever else the
   // command needs.
   const query = (e: any, extra: string[]) =>
-    `{ ${[...e.parents, ...extra].map((k: string) => `${k}: '...'`).join(', ')} }`
+    `{ ${[...e.parents, ...extra].map((k: string) => `${jsKey(k)}: '...'`).join(', ')} }`
 
   // How a single record is addressed. The `load$('x')` short form only works
   // when the id field is literally `id`.
-  const oneArg = (e: any) => 0 < e.parents.length ? query(e, [e.idf]) :
-    'id' === e.idf ? `'...'` : query(e, [e.idf])
+  const oneArg = (e: any) => 0 < e.parents.length ? query(e, ['id']) : `'...'`
+
+  const apiKeyOf = (e: any) => 0 < idPartsOf(e).length ?
+    idPartsOf(e).join(String(e.idsep || '/')) : (e.rk || 'id')
 
   // The required-key phrasing, which has to read correctly for one key as
   // well as several.
@@ -3477,11 +3566,11 @@ A canon carries only the commands its API operations support — an entity the
 API offers no delete for has no \`remove$\` — so the tables below are the
 whole of what each one answers.
 
-| Seneca canon | SDK accessor | Route | Id field | Parent keys | Commands |
-| ------------ | ------------ | ----- | -------- | ----------- | -------- |
+| Seneca canon | SDK accessor | Route | API key | Parent keys | Commands |
+| ------------ | ------------ | ----- | ------- | ----------- | -------- |
 `)
     each(provider.entities, (e: any) => {
-      Content(`| \`${canon(e)}\` | \`sdk.${e.acc}()\` | \`${e.path}\` | \`${e.idf}\` | ${0 < e.parents.length ?
+      Content(`| \`${canon(e)}\` | \`sdk.${e.acc}()\` | \`${e.path}\` | \`${apiKeyOf(e)}\` | ${0 < e.parents.length ?
         keys(e.parents) : '—'} | ${cmdList(e)} |
 `)
     })
@@ -3517,7 +3606,7 @@ before any request is made, rather than issuing one that would 404.
 `)
       }
       if (e.cmds.includes('load')) {
-        Content(`| \`load$(q)\` | ${reqd([...e.parents, e.idf])} | One \`${e.name}\`, or \`null\` if not found. |
+        Content(`| \`load$(q)\` | ${reqd([...e.parents, 'id'])} | One \`${e.name}\`, or \`null\` if not found. |
 `)
       }
       if (e.cmds.includes('save')) {
@@ -3529,24 +3618,16 @@ before any request is made, rather than issuing one that would 404.
 `)
       }
       if (e.cmds.includes('remove')) {
-        Content(`| \`remove$(q)\` | ${reqd([...e.parents, e.idf])} | \`null\`. |
+        Content(`| \`remove$(q)\` | ${reqd([...e.parents, 'id'])} | \`null\`. |
 `)
       }
 
-      // The `load$('x')` short form sets `id`, which an entity keyed by
-      // anything else never reads. Nested entities need the object form for
-      // their parent keys anyway, so this only needs saying for top-level ones.
-      const shortForm = 0 === e.parents.length && 'id' !== e.idf ?
-        e.cmds.filter((c: string) => 'load' === c || 'remove' === c) : []
-
-      if (0 < shortForm.length) {
+      if ('id' !== apiKeyOf(e)) {
         Content(`
-This entity is keyed by \`${e.idf}\` rather than \`id\`, so the short
-${1 === shortForm.length ? 'form' : 'forms'} ${shortForm
-            .map((c: string) => `\`${c}$('...')\``).join(' and ')} ${1 === shortForm.length ?
-              'does' : 'do'} not address it: Seneca reads a bare string as
-\`{id: '...'}\`, which is not a key this entity uses. Pass
-\`{ ${e.idf}: '...' }\` instead.
+The API addresses \`${e.name}\` records by \`${apiKeyOf(e)}\`; the provider
+carries that value as the entity's \`id\`, so every query and entity above
+uses \`id\`. A record the API returns with an unrelated \`id\` of its own
+keeps that under \`${provider.lower}_id\`.
 `)
       }
 
@@ -3565,7 +3646,8 @@ also defines are passed through unchanged in both directions.
 | ----- | ---- | ----- |
 `)
         each(e.fields, (f: any) => {
-          Content(`| \`${f.name}\` | ${f.kind} | ${f.name === e.idf ? 'Id field.' :
+          Content(`| \`${f.name}\` | ${f.kind} | ${f.name === (e.rk || 'id') ?
+            ('id' === f.name ? 'Id field.' : 'API key; carried as the entity\'s `id`.') :
             e.parents.includes(f.name) ? ('' === f.parentEntity ?
               'Parent key. Required by every command.' :
               `Parent key: the id of a \`${f.parentEntity}\`. Required by every command.`) : ''} |
@@ -3598,15 +3680,13 @@ also defines are passed through unchanged in both directions.
       // The dispatching entity to show it with: the subject when it qualifies,
       // otherwise the first that does.
       const s = dispatch.includes(subject) ? subject : dispatch[0]
-      const writable = s.fields
-        .filter((f: any) => f.name !== s.idf && f.name !== 'id')
-        .filter((f: any) => !s.parents.includes(f.name))
+      const writable = s.fields.filter((f: any) => ownField(s, f))
       const value = (f: any, alt: boolean) => 'number' === f.kind ?
         (alt ? '4321' : '1234') : 'boolean' === f.kind ?
           (alt ? 'true' : 'false') : `'${f.name}${alt ? '-changed' : '-value'}'`
       const make = [
-        ...s.parents.map((k: string) => `${k}: '...'`),
-        ...writable.map((f: any) => `${f.name}: ${value(f, false)}`),
+        ...s.parents.map((k: string) => `${jsKey(k)}: '...'`),
+        ...writable.map((f: any) => `${jsKey(f.name)}: ${value(f, false)}`),
       ].join(', ')
 
       Content(`
@@ -3617,13 +3697,13 @@ created, an entity **with** one is updated. The provider dispatches on the
 id field, so the same call does both.
 
 \`\`\`js
-// Create — no ${s.idf}.
+// Create — no id.
 const ${s.name} = await seneca
   .entity('${canon(s)}')
   .make$({ ${make} })
   .save$()
 
-// Update — ${s.idf} present.
+// Update — id present.
 ${0 < writable.length ? `${s.name}.${writable[0].name} = ${value(writable[0], true)}
 ` : ''}await ${s.name}.save$()
 \`\`\`
@@ -3876,19 +3956,26 @@ it is absent, \`null\` or the empty string.
 
     Content(`
 ## Authentication keys
-
+${!provider.authActive ? `
+The ${provider.api} definition declares no authentication. The plugin reads
+no key and adds no credential to any request: \`sys:provider,get:keymap\` is
+never posted. An \`apikey\` configured under this provider's name is
+accepted, for uniformity with other providers, and ignored.
+` : `
 The plugin follows the provider convention: if an \`apikey\` key is
-configured and non-empty, it is sent as \`authorization: Bearer <apikey>\`
-on every request. If the provider is not registered, or the key is absent or
-empty, no header is added and startup proceeds normally — an API that needs
-no credential exercises the same path.
+configured and non-empty, it is sent as ${credentialWire(provider)} on every
+request.${provider.authBasic ? ` HTTP Basic needs a second key, \`secret\`; with
+either missing, no credential is sent.` : ''} If the provider is not
+registered, or the key is absent or empty, no credential is added and
+startup proceeds with a warning in the log.
 
 \`\`\`js
   .use('provider', {
     provider: {
       ${provider.lower}: {
         keys: {
-          apikey: { value: '$${provider.ENV}_APIKEY' },
+          apikey: { value: '$${provider.ENV}_APIKEY' },${provider.authBasic ? `
+          secret: { value: '$${provider.ENV}_SECRET' },` : ''}
         },
       },
     },
@@ -3896,9 +3983,10 @@ no credential exercises the same path.
 \`\`\`
 
 The key is read once, during \`seneca.prepare()\`, by posting
-\`sys:provider,get:keymap,provider:${provider.lower}\`. An \`authorization\`
-header supplied through the \`sdk.headers\` option takes precedence over it.
-
+\`sys:provider,get:keymap,provider:${provider.lower}\`. A header supplied
+through the \`sdk.headers\` option takes precedence over the one the key
+would set.
+`}
 ## Environment variables
 
 The plugin never reads the environment itself. These are the variables the
@@ -4287,12 +4375,19 @@ by hand. Nothing about the mapping is waiting to be written.
 `)
     }
 
-    Content(`## Credentials, whether or not the API needs them
+    Content(provider.authActive ? `## Credentials, whether or not the API needs them
 
 At startup the plugin asks \`@seneca/provider\` for the keymap of
-\`${provider.lower}\` and sends the \`apikey\` as a bearer token when one is
-configured.
+\`${provider.lower}\` and sends the \`apikey\` as ${credentialWire(provider)}
+when one is configured.
+` : `## Credentials, for an API that declares none
 
+The ${provider.api} definition declares no authentication, so the plugin
+plumbs no credential: it does not ask \`@seneca/provider\` for a keymap at
+startup, and adds nothing to a request. The SDK's own auth stage is empty
+for such a definition, so a key handed to it could not reach the wire.
+`)
+    Content(`
 The key is *optional*. Absent, unconfigured and empty all mean "send no
 header", and none of them is an error. For an API that needs no credential this
 looks like ceremony, and it is worth keeping anyway: the shape of a Seneca

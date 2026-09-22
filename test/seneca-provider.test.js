@@ -1942,6 +1942,158 @@ describe('seneca-provider target, from its package', () => {
     })
 
 
+    // The generated suite has to PARSE with a hyphenated parameter, wherever
+    // the name lands: an object key, a regex, a local variable.
+    test('a parameter name that is not an identifier still yields a suite that parses',
+      () => {
+        const suite = String(files[Object.keys(files)
+          .find((p) => /test\/demo-provider\.test\.js$/.test(p))])
+
+        new Script(suite)
+        ok(suite.includes("'account-id': 'account-id0'"),
+          'the hyphenated parent key is not quoted in a query')
+        ok(!/[^'"]account-id: /.test(suite),
+          'a bare hyphenated key survived')
+      })
+
+
+    // No round-trip without a create route, and no update leg without an
+    // update route: either would be a suite that fails on a working provider.
+    test('the round-trip is generated only for the ops the entity has', () => {
+      const suite = String(files[Object.keys(files)
+        .find((p) => /test\/demo-provider\.test\.js$/.test(p))])
+
+      ok(!suite.includes("it('setting-crud'"),
+        'a round-trip was generated for an entity with no create route')
+      ok(suite.includes('NO setting create/update/remove round-trip'),
+        'the missing round-trip is not explained in the file')
+
+      const start = suite.indexOf("it('ledger-crud'")
+      ok(0 <= start, 'no round-trip for an entity with create and remove')
+      const body = suite.slice(start, suite.indexOf("\n  it('", start + 1))
+      strictEqual((body.match(/\.save\$\(\)/g) || []).length, 1,
+        'the round-trip saves a loaded record on an entity with no update')
+    })
+
+
+    // Seneca's key is `id`, on every entity. The docs address a record the
+    // way the provider does, and never print a null id field.
+    test('the docs address a username-keyed record by id', () => {
+      const doc = (name) => String(files[Object.keys(files)
+        .find((p) => p.endsWith('/doc/' + name))])
+
+      for (const name of ['how-to.md', 'reference.md', 'tutorial.md']) {
+        const text = doc(name)
+        ok(!text.includes('undefined'), name + ' prints undefined')
+        ok(!/load\$\(\{[^}]*username:/.test(text),
+          name + ' queries a Seneca entity by the API key')
+        ok(!/remove\$\(\{[^}]*username:/.test(text),
+          name + ' removes a Seneca entity by the API key')
+      }
+
+      ok(doc('how-to.md').includes("load$('account0')"),
+        'the how-to does not read one account by id')
+      ok(doc('reference.md').includes('`username` | string | API key'),
+        'the reference does not name the API key')
+      ok(!doc('reference.md').includes('do not address it'),
+        'the reference still says the short form does not work')
+    })
+
+
+    // An API that declares no authentication gets docs that say so, not a
+    // bearer header the SDK would strip.
+    test('the docs of an unauthenticated API claim no bearer header', () => {
+      for (const p of Object.keys(files).filter((f) => /seneca-provider\/doc\//.test(f))) {
+        ok(!/bearer/i.test(files[p]), p + ' claims a bearer header')
+      }
+      const howto = String(files[Object.keys(files).find((p) => p.endsWith('/doc/how-to.md'))])
+      ok(howto.includes('declares no authentication'),
+        'the how-to does not say the API declares no authentication')
+    })
+  })
+
+
+  // Docs and tests driven by the model's authentication scheme and parent
+  // keys, each on its own small generation.
+  describe('model-driven docs', () => {
+
+    test('basic auth docs name the secret and the scheme', async () => {
+      const api = API.replace("auth: false",
+        "auth: true, security: { type: 'http', in: 'header', name: 'Authorization', prefix: 'Basic' }")
+      const { files } = await generateInto(consumer, {
+        model: consumerModel(consumer.sdk, '', api),
+      })
+
+      const ref = String(files[Object.keys(files).find((p) => p.endsWith('/doc/reference.md'))])
+      const howto = String(files[Object.keys(files).find((p) => p.endsWith('/doc/how-to.md'))])
+
+      ok(ref.includes('authorization: Basic'), 'the reference does not name the scheme')
+      ok(ref.includes('`secret`'), 'the reference does not name the second key')
+      ok(howto.includes("secret: { value: '$DEMO_SECRET' }"),
+        'the how-to does not configure the secret')
+      ok(!/bearer/i.test(ref + howto), 'a bearer header is claimed for basic auth')
+    })
+
+
+    test('a bearer API is documented with its own header', async () => {
+      const api = API.replace("auth: false",
+        "auth: true, security: { type: 'http', in: 'header', name: 'Authorization', prefix: 'Bearer' }")
+      const { files } = await generateInto(consumer, {
+        model: consumerModel(consumer.sdk, '', api),
+      })
+
+      const ref = String(files[Object.keys(files).find((p) => p.endsWith('/doc/reference.md'))])
+      ok(ref.includes('`authorization: Bearer <apikey>`'), 'the bearer header is not named')
+      ok(!ref.includes('`secret`'), 'a secret is claimed for a bearer scheme')
+    })
+
+
+    // A parent key naming no entity seeds as `user0`, in the seed AND in the
+    // query that reads it back. A tutorial whose query does not match its
+    // own seed teaches a lookup that answers null.
+    test('the tutorial and how-to query a parent key the way they seed it', async () => {
+      const { files } = await generateInto(consumer, {
+        model: consumerModel(consumer.sdk, PARENT_ACTION_ENTITY),
+      })
+
+      for (const name of ['tutorial.md', 'how-to.md']) {
+        const text = String(files[Object.keys(files).find((p) => p.endsWith('/doc/' + name))])
+        ok(text.includes("user_id: 'user0'"), name + ' does not query user0')
+        ok(!text.includes("user_id: '0'"), name + ' queries a parent seeded as 0')
+        ok(!/"user_id":"0"/.test(text), name + ' seeds a parent as 0')
+      }
+    })
+
+
+    // The live missing-record read of a NESTED subject cannot be a bare id:
+    // the parent guard refuses it before any request. With no way to obtain
+    // a parent id live, the test is not emitted rather than emitted red.
+    test('a live missing-record read is not emitted for a nested subject it cannot address',
+      async () => {
+        const nested = await generateInto(consumer, {
+          model: consumerModel(consumer.sdk,
+            "main: kit: test: live: base: 'http://localhost:9999'\n" +
+            'main: kit: entity: planet: active: false\n' +
+            PARENT_ACTION_ENTITY),
+        })
+        const suite = String(nested.files[Object.keys(nested.files)
+          .find((p) => /test\/demo-provider\.test\.js$/.test(p))])
+
+        ok(suite.includes("describe('live'"), 'no live suite was generated')
+        ok(!suite.includes("load$('nosuchmeeting')"),
+          'a nested subject is read live without its parent key')
+        ok(!suite.includes('meeting-load-missing', suite.indexOf("describe('live'")),
+          'a live missing-record read was emitted with no parent id to give it')
+
+        const flat = await generateInto(consumer, {
+          model: consumerModel(consumer.sdk,
+            "main: kit: test: live: base: 'http://localhost:9999'\n"),
+        })
+        const fsuite = String(flat.files[Object.keys(flat.files)
+          .find((p) => /test\/demo-provider\.test\.js$/.test(p))])
+        ok(fsuite.includes("load$('nosuchplanet')"),
+          'a flat subject lost its live missing-record read')
+      })
   })
 
 
