@@ -28,14 +28,16 @@ main: kit: target: 'seneca-provider': {
     kind: *'prod' | string
   }
 
+  # The host framework and its plugins: peers of the application, and dev
+  # dependencies of the generated suite, which loads every one of them.
   deps: {
-    '@seneca/env':       { active: true, version: '>=0.4',  kind: peer }
-    '@seneca/provider':  { active: true, version: '>=4',    kind: peer }
+    '@seneca/env':       { active: true, version: '>=0.4',  kind: 'peer,dev' }
+    '@seneca/provider':  { active: true, version: '>=4',    kind: 'peer,dev' }
 
     'seneca':            { active: true, version: '>=3||>=4.0.0-rc2', kind: 'peer,dev' }
 
-    'seneca-entity':     { active: true, version: '>=26',   kind: peer }
-    'seneca-promisify':  { active: true, version: '>=3',    kind: peer }
+    'seneca-entity':     { active: true, version: '>=26',   kind: 'peer,dev' }
+    'seneca-promisify':  { active: true, version: '>=3',    kind: 'peer,dev' }
 
     '@seneca/doc':       { active: true, version: '^8.0.0', kind: dev }
 
