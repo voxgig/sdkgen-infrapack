@@ -96,8 +96,14 @@ be told apart from an author who did not know it existed.
 
 ```bash
 npm install
-npm test          # type-checks the components, then runs the suite
+npm test          # the comment gate, the dependency gate, then the suite
 ```
+
+A committed dependency must name a published npm package or a GitHub
+reference; local wiring to a sibling checkout is how a change gets tested
+before its dependency is released, and undoing it is part of finishing.
+`make deps` checks that and `make deps-test` runs its own suite; `npm test`,
+the pre-push hook and CI all run the gate, so it cannot be forgotten.
 
 The suite runs on `@voxgig/sdkgen/testkit`: it installs this package into a
 staged consumer through the real `package add`, compiles the components the way
