@@ -3639,7 +3639,10 @@ before any request is made, rather than issuing one that would 404.
 The API addresses \`${e.name}\` records by \`${apiKeyOf(e)}\`; the provider
 carries that value as the entity's \`id\`, so every query and entity above
 uses \`id\`. A record the API returns with an unrelated \`id\` of its own
-keeps that under \`${provider.lower}_id\`.
+${false === e.parkfree ?
+          `keeps it where it is: \`${provider.lower}_id\`, where this provider
+would otherwise park it, is a name \`${e.name}\` itself uses.` :
+          `keeps that under \`${provider.lower}_id\`.`}
 `)
       }
 

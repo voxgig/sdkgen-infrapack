@@ -212,8 +212,7 @@ function recordKey(ent: any): string {
 }
 
 
-// Does a create have to SEND the record key? An API-assigned `id` is the API's
-// own; a required one is the caller's. A composite key is addressed, not sent.
+// Does a create have to SEND the record key, or does the API assign it?
 function rkOnCreate(ent: any): boolean {
   const rk = recordKey(ent)
 
@@ -223,6 +222,19 @@ function rkOnCreate(ent: any): boolean {
 
   return opRequestShape(ent, 'create').items
     .some((it: any) => it.name === rk && !it.optional)
+}
+
+
+// Is `<provider>_id` free for this entity, or a name it already uses itself?
+function parkFree(ent: any, parked: string): boolean {
+  const taken = new Set<string>([
+    recordKey(ent),
+    ...idParts(ent),
+    ...parentKeys(ent),
+    ...Object.values(ent.fields || {}).map((f: any) => String(f.n)),
+  ])
+
+  return !taken.has(parked)
 }
 
 
@@ -370,6 +382,7 @@ const Main = cmp(function Main(props: any) {
         idf: entityIdField(ent),
         rk: recordKey(ent),
         rkoncreate: rkOnCreate(ent),
+        parkfree: parkFree(ent, lower + '_id'),
         // The composite key, when this API addresses a record by several
         // path params at once. The doc and test emitters in Extras need the
         // same answer the handler emitters use: a test that addresses a
@@ -884,8 +897,9 @@ function ${provider.pluginName}(this: any, options: ${provider.pluginName}Option
           const from = null == spec.from ? '' :
             `, from: { ${Object.keys(spec.from).sort()
               .map((k: string) => `${jsKey(k)}: '${spec.from[k]}'`).join(', ')} }`
+          const park = false === e.parkfree ? ', park: false' : ''
           return `    ${jsKey(e.name)}: { parts: [${
-            spec.parts.map((p: string) => `'${p}'`).join(', ')}], sep: '${spec.sep}'${from} },`
+            spec.parts.map((p: string) => `'${p}'`).join(', ')}], sep: '${spec.sep}'${from}${park} },`
         }).join('\n')
 
         Content(`  // HOW EACH ENTITY'S id MAPS TO THE API'S OWN KEYS, from the model.
@@ -902,7 +916,9 @@ function ${provider.pluginName}(this: any, options: ${provider.pluginName}Option
   //          field's name: github returns a repo's owner as an OBJECT
   //          (\`owner.login\`) and its name as \`name\`, never \`repo\`.
   //          A part missing here cannot be read back off a response.
-  const ID_SPEC: Record<string, { parts: string[], sep: string, from?: Record<string, string> }> = {
+  // \`park\`   false where \`${provider.lower}_id\` is a name this entity
+  //          already uses, so the API's own id is left where it is.
+  const ID_SPEC: Record<string, { parts: string[], sep: string, from?: Record<string, string>, park?: boolean }> = {
 ${rows}
   }
 
@@ -953,7 +969,7 @@ ${rows}
   // THE ADDRESSING KEY WINS over an \`id\` the response already carries. A
   // response often has both — github's pull has a global database \`id\` and
   // a repo-scoped \`number\` — and the unrelated one is no use for addressing
-  // anything. It is kept as \`${provider.lower}_id\` rather than dropped.
+  // anything. It is kept as \`${provider.lower}_id\`, unless \`park\` forbids.
   function joinid(name: string, data: any, vals?: any) {
     const spec = ID_SPEC[name]
     if (null == data) {
@@ -979,7 +995,7 @@ ${rows}
     }
 
     if (null != id) {
-      if (null != data.id && String(data.id) !== id &&
+      if (false !== spec.park && null != data.id && String(data.id) !== id &&
         null == ${jsProp('data', provider.lower + '_id')}) {
         ${jsProp('data', provider.lower + '_id')} = data.id
       }
@@ -1205,6 +1221,14 @@ ${actionBranch('load',
 
           const isUpdate = keyed ? 'null != key' : 'null != data.id'
 
+          // Deleting a name the entity owns strips a value the caller supplied.
+          const dropPark = false === e.parkfree ? '' : `
+      // \`${provider.lower}_id\` is this provider's own bookkeeping — the
+      // API's unrelated \`id\`, parked by joinid(). It is not a field of the
+      // API's write schema, so it must not travel in the request body.
+      delete ${jsProp('data', provider.lower + '_id')}
+`
+
           const keyBlock = 0 < eparts.length ? `
       // Seneca carries this ${e.name}'s key as one \`id\`; the API addresses
       // the record by ${eparts.map((p: string) => '`' + p + '`').join(' and ')}.
@@ -1224,13 +1248,7 @@ ${actionBranch('load',
       if (null != data.id) {
         key = splitid('${e.name}', data.id, 'save')
       }
-
-      // \`${provider.lower}_id\` is this provider's own bookkeeping — the
-      // API's unrelated \`id\`, parked by joinid() so it is not lost. It is
-      // not a field of the API's write schema, so it must not travel in the
-      // request body.
-      delete ${jsProp('data', provider.lower + '_id')}
-
+${dropPark}
       // AND NEITHER DOES THE JOINED \`id\`. It is Seneca's key for this
       // record, not the API's: a composite ${e.name} is addressed by
       // \`${eparts.join('\` and \`')}\`, which travel as path parameters in
@@ -1250,14 +1268,7 @@ ${actionBranch('load',
           ${jsProp('data', rk)} = data.id
         }
       }
-
-      // \`${provider.lower}_id\` is this provider's own bookkeeping — the
-      // API's unrelated \`id\`, parked by joinid() so it is not lost. It
-      // is not a field of the API's write schema, so it must not travel in
-      // the request body: a strict API rejects an unknown property, and a
-      // lax one may persist it.
-      delete ${jsProp('data', provider.lower + '_id')}
-
+${dropPark}
       // NOR DOES SENECA'S \`id\`. It holds the \`${rk}\` this API addresses
       // the record by, under a name this API's ${e.name} does not have: sent
       // on the body it is at best an unknown property, and to a store that

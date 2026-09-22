@@ -718,6 +718,83 @@ main: kit: flow: BasicProjectFlow: {
 `
 
 
+// A KEY NAMED LIKE THE PROVIDER'S OWN BOOKKEEPING. The provider parks an
+// unrelated API `id` under `<provider>_id`, so in a provider called `demo` the
+// name `demo_id` is taken — and this entity, nested under `/demo/{demo_id}/`
+// and keyed by `slug`, already has a required parent key of exactly that name.
+// Named `emblem` rather than `badge` only so it does not collide with the
+// action-only fixture above.
+const EMBLEM_ENTITY = `
+main: kit: entity: emblem: {
+  alias: field: {}
+  name: "emblem"
+  id: { field: "id", name: "id" }
+  field: {
+    demo_id: { name: "demo_id", kind: "field", type: "\`$STRING\`", required: true }
+    slug:    { name: "slug",    kind: "field", type: "\`$STRING\`", required: true }
+    label:   { name: "label",   kind: "field", type: "\`$STRING\`", required: true }
+  }
+  fields: {
+    "demo_id": { h: 'Demo', n: "demo_id", r: true, t: "\`$STRING\`" }
+    "slug":    { h: 'Slug', n: "slug",    r: true, t: "\`$STRING\`" }
+    "label":   { h: 'Label', n: "label",  r: true, t: "\`$STRING\`" }
+  }
+  op: {
+    list: { name: "list", points: [ {
+      g: { params: [
+        { k: "param", n: "demo_id", or: "demo_id", r: true, t: "\`$STRING\`", ex: "d01" }
+      ] }
+      m: "GET", o: "/demo/{demo_id}/emblem"
+      s: [{ lit: "demo" }, { var: "demo_id" }, { lit: "emblem" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    load: { name: "load", points: [ {
+      g: { params: [
+        { k: "param", n: "demo_id", or: "demo_id", r: true, t: "\`$STRING\`", ex: "d01" }
+        { k: "param", n: "slug", or: "slug", r: true, t: "\`$STRING\`", ex: "s01" }
+      ] }
+      m: "GET", o: "/demo/{demo_id}/emblem/{slug}"
+      s: [{ lit: "demo" }, { var: "demo_id" }, { lit: "emblem" }, { var: "slug" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    create: { name: "create", points: [ {
+      g: {
+        params: [ { k: "param", n: "demo_id", or: "demo_id", r: true, t: "\`$STRING\`", ex: "d01" } ]
+        body: [
+          { k: "body", n: "slug", r: true, t: "\`$STRING\`" }
+          { k: "body", n: "label", r: true, t: "\`$STRING\`" }
+        ]
+      }
+      m: "POST", o: "/demo/{demo_id}/emblem"
+      s: [{ lit: "demo" }, { var: "demo_id" }, { lit: "emblem" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    update: { name: "update", points: [ {
+      g: {
+        params: [
+          { k: "param", n: "demo_id", or: "demo_id", r: true, t: "\`$STRING\`", ex: "d01" }
+          { k: "param", n: "slug", or: "slug", r: true, t: "\`$STRING\`", ex: "s01" }
+        ]
+        body: [ { k: "body", n: "label", r: false, t: "\`$STRING\`" } ]
+      }
+      m: "PATCH", o: "/demo/{demo_id}/emblem/{slug}"
+      s: [{ lit: "demo" }, { var: "demo_id" }, { lit: "emblem" }, { var: "slug" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    remove: { name: "remove", points: [ {
+      g: { params: [
+        { k: "param", n: "demo_id", or: "demo_id", r: true, t: "\`$STRING\`", ex: "d01" }
+        { k: "param", n: "slug", or: "slug", r: true, t: "\`$STRING\`", ex: "s01" }
+      ] }
+      m: "DELETE", o: "/demo/{demo_id}/emblem/{slug}"
+      s: [{ lit: "demo" }, { var: "demo_id" }, { lit: "emblem" }, { var: "slug" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+  }
+}
+
+main: kit: flow: BasicEmblemFlow: {
+  entity: "emblem", kind: "basic", name: "BasicEmblemFlow"
+  step: [ { o: "list" } ]
+}
+`
+
+
 // The generated TypeScript SDK, compiled and loaded, so a provider can be
 // driven against the SDK's own offline mock transport rather than a stand-in.
 // The SDK has no runtime dependencies; only the type roots are borrowed.
@@ -1795,7 +1872,7 @@ describe('seneca-provider target, from its package', () => {
       const out = await generateInto(consumer, {
         model: consumerModel(consumer.sdk,
           ACCOUNT_ENTITY + REPO_ENTITY + LEDGER_ENTITY + SETTING_ENTITY +
-          PROJECT_ENTITY + PARENT_ACTION_ENTITY),
+          PROJECT_ENTITY + PARENT_ACTION_ENTITY + EMBLEM_ENTITY),
       })
       files = out.files
       sdk = compileSdk(files)
@@ -2042,6 +2119,40 @@ describe('seneca-provider target, from its package', () => {
         created.slice(0, created.indexOf('##', 3))),
         'the how-to teaches a create with an empty body:\n' +
         created.slice(0, 400))
+    })
+
+
+    // THE PARKED ID'S NAME CAN BE TAKEN.
+    //
+    // An unrelated API `id` is parked under `<provider>_id` so it is not lost,
+    // and dropped from a write because the API's schema has no such field. In
+    // a provider called `demo` that name is `demo_id` — which is exactly what
+    // this API calls `emblem`'s required parent key, so the delete ran ahead of
+    // the guard and every save was refused for a key the caller had supplied.
+    test('a save keeps a parent key that is named like the parked id', async () => {
+      const calls = []
+      await drive(entity, 'emblem', 'save',
+        saveMsg({ id: 'slug0', demo_id: 'demo0', label: 'first' }), calls)
+
+      strictEqual(calls.length, 1, 'the save never reached the SDK')
+      strictEqual(calls[0][1], 'update')
+      deepStrictEqual(calls[0][2],
+        { demo_id: 'demo0', slug: 'slug0', label: 'first' })
+    })
+
+
+    // The other half: parking must not INVENT one either. A response that does
+    // not repeat the parent key would otherwise come back carrying the API's
+    // own id under it — a parent id pointing at nothing.
+    test('a read does not park an unrelated id over a real key', async () => {
+      const calls = []
+      const got = await drive(entity, 'emblem', 'load',
+        { q: { demo_id: 'demo0', id: 'slug0' }, ent: {} }, calls,
+        () => ({ id: 987654321, slug: 'slug0', label: 'first' }))
+
+      strictEqual(got.id, 'slug0')
+      strictEqual(got.demo_id, undefined,
+        'the API id was parked over the parent key: ' + got.demo_id)
     })
 
 
