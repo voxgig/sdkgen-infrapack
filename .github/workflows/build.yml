@@ -1,0 +1,130 @@
+# Builds and tests this pack on every change, and on a schedule.
+#
+# THIS REPO HAD NO CI FOR ITS OWN CONTENT. The only workflow that ran on a
+# push was comments.yml, which checks the comment policy and nothing else.
+# The suite, the component type-check and the package gate lived solely in
+# publish.yml's `verify` job -- so a commit that broke the target stayed green
+# until someone tried to release, and the release is exactly the wrong moment
+# to discover it. This file runs those same gates when the change lands.
+#
+# THE SCHEDULE IS NOT PADDING, it is the reason this pack is a separate
+# repository. package.json says so outright: there is no `file:` path back to
+# the generator, the dependency is the published package, and "it makes this
+# package's CI the thing that catches an sdkgen release breaking a packaged
+# target". A push-triggered build cannot do that -- an sdkgen release is not a
+# push HERE. Without a scheduled run the stated purpose of the split is
+# unenforced, and the target stays broken until the next commit happens by.
+#
+# TWO DEPENDENCY LANES, because `>=` floors make "it passes" ambiguous:
+#
+#   current  what a consumer installing today actually resolves.
+#   floor    the oldest versions peerDependencies permits.
+#
+# package.json defines the floor as "THE OLDEST PUBLISHED VERSION THIS SUITE
+# IS RUN AGAINST" -- a claim that was true of nothing, since every install
+# here resolves to newest. The floor lane is what makes the sentence true.
+# This target is the worked example in that comment: it calls `pointSegments`,
+# which sdkgen first exported in 4.8.0, so a floor below that installs clean
+# and then dies at generation. Only a lane that runs AT the floor can tell.
+#
+# THE FLOOR IS READ FROM peerDependencies, not written out here. Two copies of
+# a version number drift, and the copy in a workflow is the one nobody looks
+# at.
+#
+# `npm install`, NOT `npm ci`: this repo gitignores package-lock.json, so there
+# is no lockfile to install from. The sibling build workflows in voxgig/sdkgen
+# and voxgig/create-sdkgen use `npm ci` because those repos commit one; copying
+# them verbatim here fails on a missing lockfile.
+#
+# ubuntu only, deliberately. The siblings run a three-OS matrix, but this
+# suite stages consumer projects in a temporary directory and runs npm and the
+# generator inside them, and that path has never been exercised on Windows or
+# macOS. Adding those runners is a real improvement; adding them untested
+# would just make this file red on arrival.
+
+name: build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Daily. Off the hour: GitHub queues scheduled runs hardest on the hour.
+    # Offset from sdkgen-langpack's so the two packs do not contend.
+    - cron: '32 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes an in-flight run irrelevant. Scheduled
+# and main runs are kept: those are the release-history signal.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: build (${{ matrix.deps }} deps)
+
+    strategy:
+      fail-fast: false
+      matrix:
+        deps: [current, floor]
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24.x
+
+      - name: Install
+        run: npm install --no-audit --no-fund
+
+      # Downgrade AFTER the install: npm would otherwise re-resolve these to
+      # newest while satisfying everything else. `--no-save` keeps the
+      # manifest the source of truth for what the floor is.
+      - name: Pin the declared floor
+        if: ${{ matrix.deps == 'floor' }}
+        run: |
+          set -euo pipefail
+          SDKGEN="$(node -p "require('./package.json').peerDependencies['@voxgig/sdkgen']")"
+          APIDEF="$(node -p "require('./package.json').peerDependencies['@voxgig/apidef']")"
+
+          # `>=4.23.0` -> `4.23.0`. A floor expressed any other way (a caret, a
+          # range) is not a single version this lane can pin, and guessing one
+          # would test something the manifest does not claim.
+          for R in "$SDKGEN" "$APIDEF"; do
+            case "$R" in
+              '>='[0-9]*) ;;
+              *) echo "::error::expected a >=x.y.z floor, got '$R' (sdkgen=$SDKGEN apidef=$APIDEF)"; exit 1 ;;
+            esac
+          done
+          SDKGEN="${SDKGEN#>=}"
+          APIDEF="${APIDEF#>=}"
+
+          echo "pinning @voxgig/sdkgen@$SDKGEN @voxgig/apidef@$APIDEF"
+          npm install --no-audit --no-fund --no-save \
+            "@voxgig/sdkgen@$SDKGEN" "@voxgig/apidef@$APIDEF"
+
+      - name: Report what is actually installed
+        run: |
+          node -p "['@voxgig/sdkgen','@voxgig/apidef'].map(n=>n+' '+require(n+'/package.json').version).join('\n')"
+
+      # Compiles the target's components. They run inside a CONSUMER project,
+      # so a missing import or a renamed export is invisible here and fatal
+      # there -- it breaks every generated Seneca provider.
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      # This repo IS an sdkgen package, so its authoring gate is a CI gate.
+      - name: Check the package manifest
+        run: npm run check-package
