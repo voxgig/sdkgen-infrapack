@@ -2000,6 +2000,23 @@ describe('seneca-provider target, from its package', () => {
     })
 
 
+    test('the generated provider declares the host framework for its own suite', () => {
+      const pkg = JSON.parse(files[Object.keys(files)
+        .find((p) => /seneca-provider\/package\.json$/.test(p))])
+
+      for (const dep of ['seneca', 'seneca-entity', 'seneca-promisify',
+        '@seneca/provider', '@seneca/env']) {
+        ok(null != pkg.devDependencies[dep], dep + ' is not a dev dependency')
+        ok(null != pkg.peerDependencies[dep], dep + ' is not a peer dependency')
+      }
+
+      for (const wf of Object.keys(files).filter((p) => /\.github\/workflows\//.test(p))) {
+        ok(!files[wf].includes('--no-save'),
+          wf + ' still installs the host framework by hand')
+      }
+    })
+
+
     // An API that declares no authentication gets docs that say so, not a
     // bearer header the SDK would strip.
     test('the docs of an unauthenticated API claim no bearer header', () => {
