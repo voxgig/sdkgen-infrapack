@@ -2015,6 +2015,56 @@ describe('seneca-provider target, from its package', () => {
     })
 
 
+    // A CLIENT-SUPPLIED KEY TRAVELS ON THE CREATE.
+    //
+    // Keeping the key out of the body is right for an API-assigned `id`: the
+    // API chooses it and a supplied one is ignored. It is wrong for a key the
+    // create request declares required — `account` is keyed by a `username`
+    // nobody else can invent — and taking it out left an empty create in every
+    // generated example and in the round-trip test, so the suite asserted an
+    // id the mock could only have made up and a real server would have been
+    // sent `POST /account {}`.
+    test('a create carries the key the API requires', () => {
+      const suite = String(files[Object.keys(files)
+        .find((p) => /test\/demo-provider\.test\.js$/.test(p))])
+
+      const start = suite.indexOf("it('account-crud'")
+      ok(0 <= start, 'no round-trip for the username-keyed entity')
+      const body = suite.slice(start, suite.indexOf("\n  it('", start + 1))
+
+      ok(/make\$\(\{ username: '[^']+' \}\)/.test(body),
+        'the generated create sends no username:\n' + body)
+
+      const howto = String(files[Object.keys(files)
+        .find((p) => p.endsWith('/doc/how-to.md'))])
+      const created = howto.slice(howto.indexOf('## Create a record'))
+      ok(/make\$\(\{ username: '[^']+' \}\)/.test(
+        created.slice(0, created.indexOf('##', 3))),
+        'the how-to teaches a create with an empty body:\n' +
+        created.slice(0, 400))
+    })
+
+
+    // ...AND AN API-ASSIGNED `id` STILL DOES NOT. The fix above must not turn
+    // into "send whatever the key is called": `planet` is keyed by an `id` the
+    // API assigns, and a create that supplies one is at best ignored.
+    test('a create omits an id the API assigns', () => {
+      const suite = String(files[Object.keys(files)
+        .find((p) => /test\/demo-provider\.test\.js$/.test(p))])
+
+      const start = suite.indexOf("it('planet-crud'")
+      ok(0 <= start, 'no round-trip for the id-keyed entity')
+      const body = suite.slice(start, suite.indexOf("\n  it('", start + 1))
+
+      const make = /make\$\(\{([^}]*)\}\)/.exec(body)
+      ok(null != make, 'no create in the round-trip:\n' + body)
+      ok(!/\bid:/.test(make[1]),
+        'the create of an id-keyed entity sends an id: ' + make[0])
+      ok(make[1].includes('title:'),
+        'the create stopped sending the entity\'s own fields: ' + make[0])
+    })
+
+
     test('the generated provider declares the host framework for its own suite', () => {
       const pkg = JSON.parse(files[Object.keys(files)
         .find((p) => /seneca-provider\/package\.json$/.test(p))])
@@ -2301,6 +2351,65 @@ describe('seneca-provider target, from its package', () => {
 
       delete ent.op.remove
       strictEqual(recordKey(ent), 'org')
+    })
+  })
+
+
+  // `rkOnCreate` — whether a create has to SEND the key it is addressed by.
+  describe('rkOnCreate', () => {
+
+    const { rkOnCreate } = loadComponent('Main_seneca-provider.ts', {
+      './Extras_seneca-provider': {
+        Tests: () => { }, Scripts: () => { }, Workflow: () => { },
+        Readme: () => { }, Docs: () => { },
+      },
+      './Gitignore_seneca-provider': { Gitignore: () => { } },
+    })
+
+    const account = (r) => ({
+      name: 'account',
+      fields: { username: { n: 'username', r }, bio: { n: 'bio', r: false } },
+      op: {
+        load: {
+          points: [{
+            s: [{ lit: 'account' }, { var: 'username' }],
+            g: { params: { username: { n: 'username', r: true } } },
+          }],
+        },
+        create: { points: [{ s: [{ lit: 'account' }], g: {} }] },
+      },
+    })
+
+    test('a key the create request requires is sent', () => {
+      strictEqual(rkOnCreate(account(true)), true)
+    })
+
+    // Optional in the create request means the API can fill it in, so the
+    // create is not empty without it.
+    test('a key the create request makes optional is not', () => {
+      strictEqual(rkOnCreate(account(false)), false)
+    })
+
+    test('an id the API assigns is not', () => {
+      strictEqual(rkOnCreate({
+        name: 'planet',
+        fields: { id: { n: 'id', r: true }, title: { n: 'title', r: true } },
+        op: {
+          load: {
+            points: [{
+              s: [{ lit: 'planet' }, { var: 'id' }],
+              g: { params: { id: { n: 'id', r: true } } },
+            }],
+          },
+          create: { points: [{ s: [{ lit: 'planet' }], g: {} }] },
+        },
+      }), false)
+    })
+
+    test('an entity with no create route has no create to send it on', () => {
+      const ent = account(true)
+      delete ent.op.create
+      strictEqual(rkOnCreate(ent), false)
     })
   })
 

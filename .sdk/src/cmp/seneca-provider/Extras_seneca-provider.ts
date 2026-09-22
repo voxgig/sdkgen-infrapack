@@ -107,9 +107,21 @@ function parentPairs(e: any, live: boolean): string {
 }
 
 
-// A field the record owns: not the API's key, not Seneca's id, not a parent.
+// A field the record owns: not Seneca's id, not a parent path param. The API's
+// key is the record's own only when a create has to supply it — an
+// API-assigned id is not the caller's to send, and a required key is.
 function ownField(e: any, f: any): boolean {
-  return f.name !== e.rk && 'id' !== f.name && !e.parents.includes(f.name)
+  if (f.name === e.rk) {
+    return true === e.rkoncreate
+  }
+  return 'id' !== f.name && !e.parents.includes(f.name)
+}
+
+
+// A field an UPDATE may change. Never the key: rewriting that addresses, or
+// renames, a different record than the one loaded.
+function changeField(e: any, f: any): boolean {
+  return f.name !== e.rk && ownField(e, f)
 }
 
 
@@ -285,7 +297,7 @@ ${ind}  const ${paramVar(p)} = ${pv}[0].id
 // is dropped rather than asserted vacuously.
 function mutableField(e: any): string {
   const f = (e.fields || []).find((f: any) =>
-    ownField(e, f) && 'string' === f.kind)
+    changeField(e, f) && 'string' === f.kind)
 
   return f ? f.name : ''
 }
@@ -365,8 +377,11 @@ ${ind}  }
 ${live ? `${ind}  if (!live) return t.skip(noServer())\n` : ''}${ind}  const seneca = await ${mk}
 ${ind}  const ent = seneca.entity('provider/${provider.lower}/${e.name}')
 
-${setup}${ind}  // Seneca's convention: an entity WITHOUT an id is a create. The API
-${ind}  // assigns the id itself, so the saved record comes back with one it chose.
+${setup}${ind}  // Seneca's convention: an entity WITHOUT an id is a create.${true === e.rkoncreate ?
+    ` This API
+${ind}  // keys ${e.name} records by \`${e.rk}\` and the create request requires it, so
+${ind}  // it is sent and comes back as the record's id.` : ` The API
+${ind}  // assigns the id itself, so the saved record comes back with one it chose.`}
 ${ind}  const made = await ent.make$({ ${pairs}${made}${idmake} }).save$()
 
 ${ind}  assert.ok(null != made.${idf})
@@ -1291,7 +1306,9 @@ run()
 async function run() {
   const seneca = await makeSeneca()
 
-  // Create: the API assigns the id, so none is supplied here.
+  // Create: ${true === subject.rkoncreate ?
+            `this API keys ${subject.name} records by \`${subject.rk}\` and the create\n  // request requires it, so it is sent and comes back as the id.` :
+            'the API assigns the id, so none is supplied here.'}
   let ${subject.name} = await seneca
     .entity('provider/${provider.lower}/${subject.name}')
     .make$({ ${make} })
@@ -1304,8 +1321,8 @@ async function run() {
 `)
         // Change something an assertion could SEE. A container field would be
         // rewritten to the same empty literal, which demonstrates nothing.
-        const upd = writable.find((f: any) =>
-          'string' === f.kind || 'number' === f.kind) || null
+        const upd = writable.find((f: any) => changeField(subject, f) &&
+          ('string' === f.kind || 'number' === f.kind)) || null
 
         if (subject.ops.includes('update') && null != upd) {
           const f = upd
@@ -2099,6 +2116,7 @@ const DocTutorial = cmp(function DocTutorial(props: any) {
 
   // Fields worth printing, and worth writing: not the id, not a parent key.
   const plainFields = subject.fields.filter((f: any) => ownField(subject, f))
+  const changeFields = plainFields.filter((f: any) => changeField(subject, f))
   const shown = plainFields.slice(0, 2)
   const litval = (f: any, alt: boolean) =>
     'number' === f.kind ? (alt ? '4321' : '1234') :
@@ -2114,7 +2132,8 @@ const DocTutorial = cmp(function DocTutorial(props: any) {
   // Creating a record with nothing in it teaches nothing, so the write step
   // needs at least one field the caller actually supplies.
   const canWrite = subject.cmds.includes('save') && 0 < plainFields.length
-  const canUpdate = canWrite && subject.ops.includes('update')
+  const canUpdate = canWrite && subject.ops.includes('update') &&
+    0 < changeFields.length
   const canRemove = canWrite && subject.cmds.includes('remove')
 
   const cmdList = subject.cmds.map((c: string) => '`' + c + '$`').join(', ')
@@ -2429,9 +2448,13 @@ so add:
   console.log('created with id', ${subjOne}.${idf})
 \`\`\`
 
-Run it, and note the id printed. It is **not** one you chose — the
+${true === subject.rkoncreate ?
+        `Run it, and note the id printed: it is the \`${subject.rk}\` you sent.
+The ${source} addresses ${subject.name} records by that key rather than by an
+id of its own, and the provider carries it as the entity's id.` :
+        `Run it, and note the id printed. It is **not** one you chose — the
 ${source} assigns ids itself and ignores any you send. That is worth
-knowing before you write code that assumes otherwise.
+knowing before you write code that assumes otherwise.`}
 
 `)
 
@@ -2441,10 +2464,10 @@ rather than a create, and \`save$\` decides between the two on exactly
 that:
 
 \`\`\`js
-  ${subjOne}.${plainFields[0].name} = ${litval(plainFields[0], true)}
+  ${subjOne}.${changeFields[0].name} = ${litval(changeFields[0], true)}
   ${subjOne} = await ${subjOne}.save$()
 
-  console.log('updated:', ${subjOne}.${plainFields[0].name})
+  console.log('updated:', ${subjOne}.${changeFields[0].name})
 \`\`\`
 
 `)
@@ -2615,7 +2638,9 @@ the way you saw:
     }
     if (canWrite) {
       Content(`- \`save$\` creates without an id and updates with one, and the
-  ${source} chooses the id.
+  ${true === subject.rkoncreate ?
+          `id is the \`${subject.rk}\` the create sends.` :
+          `${source} chooses the id.`}
 `)
     }
     if (offline) {
@@ -2721,15 +2746,18 @@ const DocHowto = cmp(function DocHowto(props: any) {
 
   // What a create sends: the seeded record without its id, because the id is
   // the API's to assign. Parent keys stay — a nested write carries them in
-  // the data rather than the query.
+  // the data rather than the query — and so does a key the create request
+  // requires, which is the caller's to supply.
   const createData = (e: any) => {
     const rec = seedRecord(e, 0)
-    delete rec[apiKey(e)]
+    if (true !== e.rkoncreate) {
+      delete rec[apiKey(e)]
+    }
     delete rec.id
     return rec
   }
 
-  const changeable = (e: any) => e.fields.find((f: any) => ownField(e, f))
+  const changeable = (e: any) => e.fields.find((f: any) => changeField(e, f))
 
   const newValue = (f: any) => 'number' === f.kind ? '999' :
     'boolean' === f.kind ? 'true' : `'${f.name}-changed'`
@@ -3665,6 +3693,7 @@ also defines are passed through unchanged in both directions.
       // otherwise the first that does.
       const s = dispatch.includes(subject) ? subject : dispatch[0]
       const writable = s.fields.filter((f: any) => ownField(s, f))
+      const alterable = writable.filter((f: any) => changeField(s, f))
       const value = (f: any, alt: boolean) => 'number' === f.kind ?
         (alt ? '4321' : '1234') : 'boolean' === f.kind ?
           (alt ? 'true' : 'false') : `'${f.name}${alt ? '-changed' : '-value'}'`
@@ -3688,7 +3717,7 @@ const ${s.name} = await seneca
   .save$()
 
 // Update — id present.
-${0 < writable.length ? `${s.name}.${writable[0].name} = ${value(writable[0], true)}
+${0 < alterable.length ? `${s.name}.${alterable[0].name} = ${value(alterable[0], true)}
 ` : ''}await ${s.name}.save$()
 \`\`\`
 

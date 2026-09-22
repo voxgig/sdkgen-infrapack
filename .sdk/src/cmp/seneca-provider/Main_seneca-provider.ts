@@ -212,6 +212,20 @@ function recordKey(ent: any): string {
 }
 
 
+// Does a create have to SEND the record key? An API-assigned `id` is the API's
+// own; a required one is the caller's. A composite key is addressed, not sent.
+function rkOnCreate(ent: any): boolean {
+  const rk = recordKey(ent)
+
+  if ('id' === rk || 0 < idParts(ent).length || null == (ent.op || {}).create) {
+    return false
+  }
+
+  return opRequestShape(ent, 'create').items
+    .some((it: any) => it.name === rk && !it.optional)
+}
+
+
 function guardName(e: any, key: string): string {
   return `need_${e.name}_${String(key).replace(/[^A-Za-z0-9_$]/g, '_')}`
     .replace(/^need_(\d)/, 'need__$1')
@@ -355,6 +369,7 @@ const Main = cmp(function Main(props: any) {
         ops: entityOps(ent),
         idf: entityIdField(ent),
         rk: recordKey(ent),
+        rkoncreate: rkOnCreate(ent),
         // The composite key, when this API addresses a record by several
         // path params at once. The doc and test emitters in Extras need the
         // same answer the handler emitters use: a test that addresses a
@@ -1457,6 +1472,7 @@ if ('undefined' !== typeof module) {
 export {
   Main,
   recordKey,
+  rkOnCreate,
   cmdActions,
   entityActionList,
 }
