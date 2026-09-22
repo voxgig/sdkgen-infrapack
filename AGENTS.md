@@ -30,14 +30,14 @@ Node 24, npm, and `make`. Those are REQUIREMENTS, not a claim that they are
 present: probe first. `command -v` answers only whether a binary exists, and
 Node's major is part of the requirement, so read `node --version` — nothing
 here enforces it, since `package.json` declares no `engines.node`. The
-pre-push hook probes for `node` because the comment gate is a Node script; it
+pre-push hook probes for `node` because the gates it runs are Node scripts; it
 does not check the major, and it does not need `make`, which the prescribed
-gate command below does.
+gate commands below do.
 
 ```bash
 npm install          # writes an ignored lockfile; see below
 npm run build        # type-checks the target's components
-npm test             # the comment gate, then the suite
+npm test             # the comment gate, the dependency gate, then the suite
 npm run check-package # this repo is itself an sdkgen package
 ```
 
@@ -50,6 +50,34 @@ install into a clean clone.
 No other LANGUAGE toolchain is in play — the target emits a TypeScript
 package. CI runs on ubuntu only; whether any of this works on Windows or macOS
 is untested rather than known.
+
+## Committed dependencies name published packages
+
+A committed dependency must name a published npm package or a GitHub
+reference. `file:`, `link:`, `portal:`, `workspace:`, `catalog:`, a bare
+filesystem path, a packed archive, a git reference to a host other than
+github.com, an off-registry `overrides` or `resolutions`, a lockfile entry
+resolving from a path or a foreign registry, a committed archive, a symlink
+escaping the repository or pointing into `node_modules`, and an `.npmrc` naming
+another registry are all findings. Symlinking a sibling checkout to test an
+unreleased tool is the right way to work; it is wrong in a commit, and undoing
+it is part of finishing.
+
+`tools/dep-gate.cjs` enforces that. It reads every tracked `package.json`,
+lockfile, `go.mod`, `Cargo.toml` and `.npmrc`, plus tracked symlinks and
+archives. `make deps` runs it, `make deps-test` runs its own suite, `npm test`
+runs it before the suite, `.githooks/pre-push` runs it before anything leaves
+the machine, and `.github/workflows/deps.yml` runs both on every push and pull
+request.
+
+It judges the tracked file SET, so wiring that git does not track — this
+repository's ignored `package-lock.json`, an untracked `go.work` — is invisible
+and stays legal. Content comes from the working tree, so editing a tracked
+manifest goes red at once rather than at `git add`.
+
+An exception goes in `tools/dep-gate.json` with a reason. The gate reports an
+entry carrying no reason, and an entry that has stopped matching anything, so
+the list cannot outlive what it excused.
 
 ## Source code comments
 

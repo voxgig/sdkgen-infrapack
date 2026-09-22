@@ -22,7 +22,7 @@
     "sdkgen-package.json"
   ],
   "scripts": {
-    "test": "node tools/comment-gate.cjs && node --enable-source-maps --test test/*.test.js",
+    "test": "node tools/comment-gate.cjs && node tools/dep-gate.cjs && node --test tools/dep-gate.test.cjs && node --enable-source-maps --test test/*.test.js",
     "test-some": "node --enable-source-maps --test-name-pattern=\"$npm_config_pattern\" --test test/*.test.js",
     "watch": "tsc -w",
     "build": "tsc",
@@ -110,7 +110,7 @@
   "devDependencies": {
     "@voxgig/apidef": ">=8.14.0",
     "@voxgig/sdkgen": ">=4.23.0",
-    "aontu": ">=0.71.0",
+    "aontu": ">=0.71.0 <0.73.0",
     "memfs": "4.68.1",
     "typescript": "7.0.2",
     "@types/node": ">=24"
