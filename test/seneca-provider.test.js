@@ -983,16 +983,16 @@ function saveMsg(data, extra) {
 
 function consumerModel(sdk, extra, api = API) {
   const src = [
-    '@"@voxgig/apidef/model/apidef.aon"',
-    '@"@voxgig/sdkgen/model/sdkgen.aon"',
-    '@"target/target-index.aon"',
-    '@"feature/feature-index.aon"',
+    '@"@voxgig/apidef/model/apidef.aontu"',
+    '@"@voxgig/sdkgen/model/sdkgen.aontu"',
+    '@"target/target-index.aontu"',
+    '@"feature/feature-index.aontu"',
     "name: 'demo'",
     api,
     extra || '',
   ].join('\n')
 
-  const path = Path.join(sdk, 'model', 'generate-test.aon')
+  const path = Path.join(sdk, 'model', 'generate-test.aontu')
   Fs.writeFileSync(path, src)
 
   const errs = []
@@ -1058,7 +1058,7 @@ describe('seneca-provider target, from its package', () => {
   test('package add installs the target', () => {
     const files = consumer.files()
 
-    ok(files.includes('model/target/seneca-provider.aon'), 'no target model')
+    ok(files.includes('model/target/seneca-provider.aontu'), 'no target model')
     ok(files.some((f) => f.startsWith('src/cmp/seneca-provider/')),
       'no components')
     ok(files.some((f) => f.startsWith('tm/seneca-provider/')), 'no templates')
