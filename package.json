@@ -53,7 +53,7 @@
     "declaring it here would be wrong: the hit is inside the template literal",
     "in Extras that WRITES the generated provider's test file. The Seneca",
     "packages are dependencies of the generated provider, declared in",
-    ".sdk/model/target/seneca-provider.aon's `deps` block, and a consumer of",
+    ".sdk/model/target/seneca-provider.aontu's `deps` block, and a consumer of",
     "THIS package has no reason to supply any of them. The grep cannot tell an",
     "import from an emitted string; expect that from any target generating a",
     "Node package.",
