@@ -1,6 +1,6 @@
 {
   "name": "@voxgig/sdkgen-infrapack",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "description": "Infrastructure-provider targets for the Voxgig SDK Generator: Seneca provider.",
   "type": "commonjs",
   "license": "MIT",
@@ -53,7 +53,7 @@
     "declaring it here would be wrong: the hit is inside the template literal",
     "in Extras that WRITES the generated provider's test file. The Seneca",
     "packages are dependencies of the generated provider, declared in",
-    ".sdk/model/target/seneca-provider.aon's `deps` block, and a consumer of",
+    ".sdk/model/target/seneca-provider.aontu's `deps` block, and a consumer of",
     "THIS package has no reason to supply any of them. The grep cannot tell an",
     "import from an emitted string; expect that from any target generating a",
     "Node package.",
@@ -104,13 +104,13 @@
     "will flag it; it is load-bearing."
   ],
   "peerDependencies": {
-    "@voxgig/apidef": ">=8.14.0",
-    "@voxgig/sdkgen": ">=4.23.0"
+    "@voxgig/apidef": ">=8.17.0",
+    "@voxgig/sdkgen": ">=4.25.0"
   },
   "devDependencies": {
-    "@voxgig/apidef": ">=8.14.0",
-    "@voxgig/sdkgen": ">=4.23.0",
-    "aontu": ">=0.71.0 <0.73.0",
+    "@voxgig/apidef": ">=8.17.0",
+    "@voxgig/sdkgen": ">=4.25.0",
+    "aontu": ">=0.75.0",
     "memfs": "4.68.1",
     "typescript": "7.0.2",
     "@types/node": ">=24"

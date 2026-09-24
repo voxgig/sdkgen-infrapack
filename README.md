@@ -81,7 +81,7 @@ The path resolves against the SDK repository root. Left unset, the provider
 generates in-tree under `seneca-provider/`, which is a usable default for a
 first look at the output.
 
-Set that in `model/project.aon`, not in the target's own file — `target add`
+Set that in `model/project.aontu`, not in the target's own file — `target add`
 overwrites the latter.
 
 ## Parity
