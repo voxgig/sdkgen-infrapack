@@ -1715,6 +1715,11 @@ describe('seneca-provider target, from its package', () => {
         'the workflow does not name the repository it is trusted from')
       ok(wf.includes('.sdk/admin/setup-npm-trust.sh'),
         'the workflow does not name the script that registers it')
+
+      const cased = await generate("main: kit: target: 'seneca-provider': sdk: version: '2.3.4'\n" +
+        "main: kit: repo: host: 'GitHub.com'")
+      ok(null != provided(cased.files, '.sdk/admin/setup-npm-trust.sh'),
+        'a host name is case-insensitive, but GitHub.com lost the script')
     })
 
 
