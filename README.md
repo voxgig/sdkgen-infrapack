@@ -109,9 +109,11 @@ project, where the `ts` target is the SDK.
 
 The builder carries a copy of the SDK's API definition and guide. `make regen`
 copies them from the SDK fetched at the tag in `sdk-pin.json` before
-generating, and generation refuses to write when the builder's entities or the
-SDK version differ from that SDK's compiled model. Generated without the SDK
-fetched, it warns that the check did not run.
+generating, and generation refuses to write when the builder's entities differ
+from that SDK's compiled model, or the package name or version differ from its
+own `ts/package.json`. The manifest is read rather than the name re-derived,
+because the SDK's generator may name packages by a rule this builder's does not
+share. Generated without the SDK fetched, it warns that the check did not run.
 
 To move to a newer SDK, set `sdk.version` and fetch its tag as you regenerate:
 

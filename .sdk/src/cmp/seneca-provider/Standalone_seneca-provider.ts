@@ -87,14 +87,20 @@ function checkSdkSource(ctx$: any, provider: any, model: any): void {
   const sdk = JSON.parse(String(fs.readFileSync(file, 'utf8')))
   const problems: string[] = []
 
-  const sdkVersion = packageVersion(sdk, 'ts')
+  // The SDK's own manifest, when fetched: this builder's naming rule need not
+  // be the one that built the SDK.
+  const manifestFile = Path.join(ctx$.folder || '.', provider.sdkSrc, 'ts', 'package.json')
+  const manifest = fs.existsSync(manifestFile) ?
+    JSON.parse(String(fs.readFileSync(manifestFile, 'utf8'))) : {}
+
+  const sdkVersion = String(manifest.version || packageVersion(sdk, 'ts'))
   if (sdkVersion !== provider.sdkVersion) {
     problems.push('version: this provider depends on ' + provider.sdkVersion +
       ', the fetched SDK is ' + sdkVersion +
       ' (make regen SDK_TAG=v' + provider.sdkVersion + ')')
   }
 
-  const sdkPkg = packageName(sdk, 'npm')
+  const sdkPkg = String(manifest.name || packageName(sdk, 'npm'))
   if (sdkPkg !== provider.sdkPkg) {
     problems.push('package: this provider depends on ' + provider.sdkPkg +
       ', the fetched SDK is ' + sdkPkg)

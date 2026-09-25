@@ -1559,7 +1559,10 @@ describe('seneca-provider target, from its package', () => {
     const SDKSRC = () => Path.join(consumer.root, '.sdksrc')
 
     // The SDK's compiled model as `make sdk-src` would fetch it.
-    function fetchSdk(version, change = (_entity) => { }) {
+    // Whatever the installed sdkgen derives for this model.
+    const DERIVED = require('@voxgig/sdkgen').packageName({ name: 'demo' }, 'npm')
+
+    function fetchSdk(version, change = (_entity) => { }, name = DERIVED) {
       const model = standaloneModel(consumer.sdk)
       const entity = JSON.parse(JSON.stringify(model.main.kit.entity))
       change(entity)
@@ -1571,6 +1574,11 @@ describe('seneca-provider target, from its package', () => {
         origin: 'voxgig-sdk',
         main: { kit: { entity, target: { ts: { publish: { version } } } } },
       }))
+
+      const ts = Path.join(SDKSRC(), 'demo-sdk', 'ts')
+      Fs.mkdirSync(ts, { recursive: true })
+      Fs.writeFileSync(Path.join(ts, 'package.json'),
+        JSON.stringify({ name, version }))
     }
 
     const unfetch = () => Fs.rmSync(SDKSRC(), { recursive: true, force: true })
@@ -1600,7 +1608,7 @@ describe('seneca-provider target, from its package', () => {
         "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'")
 
       const pkg = JSON.parse(provided(files, 'package.json'))
-      strictEqual(pkg.dependencies['@voxgig-sdk/demo'], '^2.3.4')
+      strictEqual(pkg.dependencies[DERIVED], '^2.3.4')
 
       const pin = JSON.parse(provided(files, 'sdk-pin.json'))
       strictEqual(pin.tag, 'v2.3.4')
@@ -1673,6 +1681,24 @@ describe('seneca-provider target, from its package', () => {
         'the refusal does not name both versions: ' + msg)
       ok(msg.includes('make regen SDK_TAG=v2.3.4'),
         'the refusal does not say how to fetch the right one: ' + msg)
+    })
+
+
+    // The SDK's manifest is the truth: the SDK's generator may name packages
+    // by a rule this builder's does not share.
+    test('the SDK\'s package name comes from its own manifest', async () => {
+      fetchSdk('2.3.4', undefined, '@acme/renamed-sdk')
+      const msg = await refusal(standaloneModel(consumer.sdk,
+        "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'"))
+
+      ok(null != msg, 'generated against a package the SDK is not published as')
+      ok(msg.includes('@acme/renamed-sdk'),
+        'the refusal does not name the SDK\'s own package: ' + msg)
+
+      const { files } = await generate("main: kit: target: 'seneca-provider': sdk: " +
+        "{ package: '@acme/renamed-sdk', version: '2.3.4' }")
+      const pkg = JSON.parse(provided(files, 'package.json'))
+      strictEqual(pkg.dependencies['@acme/renamed-sdk'], '^2.3.4')
     })
 
   })
