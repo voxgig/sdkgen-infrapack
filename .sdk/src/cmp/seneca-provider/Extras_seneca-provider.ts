@@ -23,7 +23,12 @@ const SdkPin = cmp(function SdkPin(props: any) {
 
   File({ name: 'sdk-pin.json' }, () => {
     Content(JSON.stringify({
-      note: 'GENERATED. The SDK this provider is generated from. ' +
+      note: provider.standalone ?
+        'GENERATED. The SDK this provider depends on and is generated from. ' +
+        '`make sdk-src` fetches it; `make regen` copies its API definition ' +
+        'into .sdk/ and regenerates this repo. Set the version in ' +
+        '.sdk/model/project.aontu, not in this file.' :
+        'GENERATED. The SDK this provider is generated from. ' +
         '`make sdk-src` fetches it; `make regen` regenerates this repo ' +
         'from it. Edit the SDK project model, not this file.',
       repo: provider.sdkRepoUrl,
@@ -1978,9 +1983,15 @@ const sdk = seneca.export('${provider.pluginName}/sdk')()
 
 ## Contributing
 
-This plugin is GENERATED. Changes belong in the SDK project's model and
+${provider.standalone ?
+`This plugin is GENERATED, by the builder in \`.sdk/\` from the API definition
+of the SDK it depends on. Changes to the API belong in the SDK project's
+model, this package's own decisions in \`.sdk/model/project.aontu\`, and
+everything else in the components that build this target — anything edited
+elsewhere in this repository is overwritten by the next \`make regen\`.` :
+`This plugin is GENERATED. Changes belong in the SDK project's model and
 components, not here — anything edited in this repository is overwritten by
-the next generation run.
+the next generation run.`}
 
 The [Senecajs org](http://senecajs.org) encourages open participation. If you
 feel you can help in any way, be it with bug reporting, documentation,
@@ -4476,7 +4487,10 @@ that has to be applied again, silently, forever.
 
 The source of truth is the SDK project's model — the repository and tag named
 in \`sdk-pin.json\`, which \`make sdk-src\` fetches to \`${provider.sdkSrc}\` —
-together with the sdkgen component that emits this target. A change to *what*
+together with the sdkgen component that emits this target.${provider.standalone ? `
+This repository builds itself: the builder in \`.sdk/\` carries a copy of that
+SDK's API definition, which \`make regen\` refreshes from the fetched source,
+and generation refuses to write when the copy no longer matches it.` : ''} A change to *what*
 the API offers belongs in the model; a change to
 *how* the provider expresses it belongs in the component. Both are versioned,
 both regenerate every provider built this way rather than just this one, and

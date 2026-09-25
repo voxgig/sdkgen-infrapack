@@ -20,6 +20,10 @@ import {
   Tests, Scripts, Workflow, Readme, Docs, SdkPin, SDK_SRC_DIR,
 } from './Extras_seneca-provider'
 import { Gitignore } from './Gitignore_seneca-provider'
+import { Makefile } from './Makefile_seneca-provider'
+import {
+  standaloneBuilder, sdkIdentity, checkSdkSource,
+} from './Standalone_seneca-provider'
 
 
 
@@ -326,8 +330,10 @@ const Main = cmp(function Main(props: any) {
   const { target, ctx$ } = props
   const { model } = ctx$
 
+  const standalone = standaloneBuilder(target)
+
   const targets = model.main[KIT].target || {}
-  if (null == targets.ts) {
+  if (!standalone && null == targets.ts) {
     throw new SdkGenError(
       'seneca-provider requires the `ts` target in the same SDK: it imports ' +
       'the TypeScript SDK that `ts` generates. Add it with:\n' +
@@ -347,8 +353,7 @@ const Main = cmp(function Main(props: any) {
   // included, so the two can never disagree.
   // The TypeScript SDK this provider WRAPS — a different target, so it
   // keeps its own name and does not follow this provider's alias.
-  const sdkPkg = packageName(model, 'npm')
-  const sdkVersion = packageVersion(model, 'ts')
+  const { sdkPkg, sdkVersion } = sdkIdentity(model, target)
 
   const entityColl = entityCollection(model)
 
@@ -510,6 +515,7 @@ const Main = cmp(function Main(props: any) {
     Name, lower, ENV, sdkClass, pluginName, fileBase,
     sdkPkg, sdkVersion, entities,
     sdkDep,
+    standalone,
     // Whether that dependency comes from outside a registry. The generated
     // CI note says so, because "npm install is all you need" stops being
     // true the moment git or a tarball URL is in the path.
@@ -549,6 +555,10 @@ const Main = cmp(function Main(props: any) {
     authPrefix: resolveAuthPrefix(model),
   }
 
+  if (standalone) {
+    checkSdkSource(ctx$, provider, model)
+  }
+
   // `.gitignore` is EMITTED rather than copied — npm strips that filename
   // from the tarball, so as a template it reached only checkout users. See
   // Gitignore_seneca-provider. Called before the Copy, as every language
@@ -560,6 +570,7 @@ const Main = cmp(function Main(props: any) {
     replace: { ...ctx$.stdrep },
   })
 
+  Makefile({ provider })
   SdkPin({ provider })
   PackageJson({ provider, target })
   ProviderSource({ provider })

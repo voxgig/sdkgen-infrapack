@@ -1509,6 +1509,175 @@ describe('seneca-provider target, from its package', () => {
   })
 
 
+  // `output: root: true`: the provider repository carries its own `.sdk/`,
+  // which has no `ts` target, and the SDK is a dependency released elsewhere.
+  describe('a builder in the provider repository', () => {
+
+    const ROOTED = "main: kit: target: 'seneca-provider': output: root: true"
+
+    // Rooted by the standard Root, or under seneca-provider/ by a test kit
+    // whose default Root predates `output: root`.
+    const provided = (files, name) =>
+      files[name] ?? files['seneca-provider/' + name]
+
+    function standaloneModel(sdk, extra = '') {
+      const src = [
+        '@"@voxgig/apidef/model/apidef.aontu"',
+        '@"@voxgig/sdkgen/model/sdkgen.aontu"',
+        '@"target/seneca-provider.aontu"',
+        '@"feature/feature-index.aontu"',
+        "name: 'demo'",
+        API,
+        ROOTED,
+        extra,
+      ].join('\n')
+
+      const path = Path.join(sdk, 'model', 'generate-test.aontu')
+      Fs.writeFileSync(path, src)
+
+      const errs = []
+      const model = new Aontu().generate(src, { path, errs })
+      strictEqual(errs.length, 0,
+        'model did not compile: ' + errs.map((e) => e.msg).join(' | '))
+
+      return model
+    }
+
+    const generate = (extra) =>
+      generateInto(consumer, { model: standaloneModel(consumer.sdk, extra) })
+
+    const refusal = async (model) => {
+      try {
+        await generateInto(consumer, { model })
+      }
+      catch (err) {
+        return String(err.message)
+      }
+      return null
+    }
+
+    const SDKSRC = () => Path.join(consumer.root, '.sdksrc')
+
+    // The SDK's compiled model as `make sdk-src` would fetch it.
+    function fetchSdk(version, change = (_entity) => { }) {
+      const model = standaloneModel(consumer.sdk)
+      const entity = JSON.parse(JSON.stringify(model.main.kit.entity))
+      change(entity)
+
+      const dir = Path.join(SDKSRC(), 'demo-sdk', '.sdk', 'model')
+      Fs.mkdirSync(dir, { recursive: true })
+      Fs.writeFileSync(Path.join(dir, 'sdk.json'), JSON.stringify({
+        name: 'demo',
+        origin: 'voxgig-sdk',
+        main: { kit: { entity, target: { ts: { publish: { version } } } } },
+      }))
+    }
+
+    const unfetch = () => Fs.rmSync(SDKSRC(), { recursive: true, force: true })
+
+    after(unfetch)
+
+
+    test('regenerates with its own builder, not the SDK project\'s', async () => {
+      unfetch()
+      const { files } = await generate("main: kit: target: 'seneca-provider': sdk: version: '2.3.4'")
+      const mk = provided(files, 'Makefile')
+
+      ok(null != mk, 'no Makefile generated')
+      ok(mk.includes('cp -R "$(SDK_DIR)/.sdk/def/." .sdk/def/'),
+        'regen does not copy the SDK\'s API definition into the builder')
+      ok(mk.includes('cp -R "$(SDK_DIR)/.sdk/model/guide/." .sdk/model/guide/'),
+        'regen does not copy the SDK\'s guide into the builder')
+      ok(mk.includes('cd .sdk && npm install'), 'regen does not run the builder')
+      ok(!mk.includes('SDKGEN_EXTERNAL'),
+        'regen still drives the SDK project\'s builder')
+    })
+
+
+    test('needs no ts target, and depends on the SDK it names', async () => {
+      unfetch()
+      const { files } = await generate(
+        "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'")
+
+      const pkg = JSON.parse(provided(files, 'package.json'))
+      strictEqual(pkg.dependencies['@voxgig-sdk/demo'], '^2.3.4')
+
+      const pin = JSON.parse(provided(files, 'sdk-pin.json'))
+      strictEqual(pin.tag, 'v2.3.4')
+      ok(pin.note.includes('.sdk/model/project.aontu'),
+        'the pin does not say where the version is set: ' + pin.note)
+    })
+
+
+    test('`sdk.package` names a package the derivation cannot', async () => {
+      unfetch()
+      const { files } = await generate("main: kit: target: 'seneca-provider': sdk: " +
+        "{ package: '@acme/widgets', version: '1.0.0' }")
+
+      const pkg = JSON.parse(provided(files, 'package.json'))
+      strictEqual(pkg.dependencies['@acme/widgets'], '^1.0.0')
+    })
+
+
+    test('a builder without a ts target must name the SDK version', async () => {
+      const msg = await refusal(standaloneModel(consumer.sdk))
+      ok(null != msg, 'generated without knowing the SDK version')
+      ok(msg.includes('sdk.version'), 'the refusal does not name the key: ' + msg)
+    })
+
+
+    test('`sdk.version` is refused in the SDK project', async () => {
+      const msg = await refusal(consumerModel(consumer.sdk,
+        "main: kit: target: 'seneca-provider': sdk: version: '9.9.9'"))
+      ok(null != msg, 'an SDK-project provider accepted sdk.version')
+      ok(msg.includes('output: root: true'),
+        'the refusal does not say where the key applies: ' + msg)
+    })
+
+
+    test('an unfetched SDK is reported as unchecked', async () => {
+      unfetch()
+      consumer.log.lines.length = 0
+      await generate("main: kit: target: 'seneca-provider': sdk: version: '2.3.4'")
+
+      ok(consumer.log.lines.some((l) => 'sdk-source-unchecked' === l.point),
+        'no warning that the model went unchecked')
+    })
+
+
+    test('a model matching the fetched SDK generates', async () => {
+      fetchSdk('2.3.4')
+      const { files } = await generate(
+        "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'")
+      ok(null != provided(files, 'package.json'), 'nothing generated')
+    })
+
+
+    test('an entity differing from the fetched SDK is refused', async () => {
+      fetchSdk('2.3.4', (entity) => { delete entity.planet.op.remove })
+      const msg = await refusal(standaloneModel(consumer.sdk,
+        "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'"))
+
+      ok(null != msg, 'generated from a model the SDK does not have')
+      ok(msg.includes('entity planet'), 'the refusal does not name it: ' + msg)
+    })
+
+
+    test('a version differing from the fetched SDK is refused', async () => {
+      fetchSdk('2.3.3')
+      const msg = await refusal(standaloneModel(consumer.sdk,
+        "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'"))
+
+      ok(null != msg, 'generated against the wrong SDK version')
+      ok(msg.includes('2.3.4') && msg.includes('2.3.3'),
+        'the refusal does not name both versions: ' + msg)
+      ok(msg.includes('make regen SDK_TAG=v2.3.4'),
+        'the refusal does not say how to fetch the right one: ' + msg)
+    })
+
+  })
+
+
   // AN ENTITY NAME THAT IS NOT A JAVASCRIPT IDENTIFIER.
   //
   // apidef canonizes an entity name to `[A-Za-z_0-9]`, so hyphens and dots
@@ -2420,6 +2589,9 @@ describe('seneca-provider target, from its package', () => {
         Readme: () => { }, Docs: () => { },
       },
       './Gitignore_seneca-provider': { Gitignore: () => { } },
+      './Makefile_seneca-provider': { Makefile: () => { } },
+      './Standalone_seneca-provider':
+        loadComponent('Standalone_seneca-provider.ts'),
     })
 
     const ENT = {
@@ -2508,6 +2680,9 @@ describe('seneca-provider target, from its package', () => {
         Readme: () => { }, Docs: () => { },
       },
       './Gitignore_seneca-provider': { Gitignore: () => { } },
+      './Makefile_seneca-provider': { Makefile: () => { } },
+      './Standalone_seneca-provider':
+        loadComponent('Standalone_seneca-provider.ts'),
     })
 
     // Airtable's real shape. opParams() alphabetizes for output stability
@@ -2596,6 +2771,9 @@ describe('seneca-provider target, from its package', () => {
         Readme: () => { }, Docs: () => { },
       },
       './Gitignore_seneca-provider': { Gitignore: () => { } },
+      './Makefile_seneca-provider': { Makefile: () => { } },
+      './Standalone_seneca-provider':
+        loadComponent('Standalone_seneca-provider.ts'),
     })
 
     const account = (r) => ({
