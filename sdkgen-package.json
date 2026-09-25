@@ -5,7 +5,7 @@
   "name": "@voxgig/sdkgen-infrapack",
   "version": "0.0.16",
   "engines": {
-    "sdkgen": ">=4.25.0"
+    "sdkgen": ">=4.30.0"
   },
   "provides": {
     "target": [

@@ -1255,6 +1255,28 @@ describe('seneca-provider target, from its package', () => {
   })
 
 
+  // A provider generated into another repository has no `.sdk` of its own
+  // there, so a trust script beside it could only fail.
+  test('a provider generated into another repository gets no trust script', async (t) => {
+    if (!outsideSupported) {
+      return t.skip('the installed @voxgig/sdkgen test kit has no `outside` '
+        + 'support, so out-of-tree generation cannot be expressed here')
+    }
+
+    const { files, outside } = await generateInto(consumer, {
+      model: consumerModel(consumer.sdk,
+        "main: kit: target: 'seneca-provider': output: path: '" + OUT + "'"),
+      outside: [OUT],
+    })
+
+    ok(null != outside[OUT]['.github/workflows/publish.yml'], 'no publish workflow was generated')
+    strictEqual(outside[OUT]['.sdk/admin/setup-npm-trust.sh'], undefined)
+    const claims = Object.entries(files)
+      .filter(([p, s]) => p.endsWith('setup-npm-trust.sh') && s.includes('=publish.yml'))
+    deepStrictEqual(claims.map(([p]) => p), [], 'an SDK trust script registers the provider workflow')
+  })
+
+
   // THE PUBLISH CREDENTIAL NEVER SHARES A JOB WITH PROJECT CODE.
   //
   // Trusted publishing mints a credential for any job granted
@@ -1671,6 +1693,28 @@ describe('seneca-provider target, from its package', () => {
       strictEqual(pin.tag, 'v2.3.4')
       ok(pin.note.includes('.sdk/model/project.aontu'),
         'the pin does not say where the version is set: ' + pin.note)
+    })
+
+
+    test('registers its own publish workflow with npm, and nothing else', async () => {
+      unfetch()
+      const { files } = await generate(
+        "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'")
+
+      const script = provided(files, '.sdk/admin/setup-npm-trust.sh')
+      ok(null != script, 'no trust script: ' +
+        Object.keys(files).filter((f) => f.includes('admin/')).join(', '))
+
+      const wf = provided(files, '.github/workflows/publish.yml')
+      const pkg = /^# Publishes (\S+) to npm/m.exec(wf)[1]
+      deepStrictEqual(script.match(/--(repository|publish) '[^']+'/g), [
+        "--repository 'senecajs/seneca-demo-provider'",
+        `--publish '${pkg}=publish.yml'`,
+      ])
+      ok(wf.includes('--repository senecajs/seneca-demo-provider'),
+        'the workflow does not name the repository it is trusted from')
+      ok(wf.includes('.sdk/admin/setup-npm-trust.sh'),
+        'the workflow does not name the script that registers it')
     })
 
 
