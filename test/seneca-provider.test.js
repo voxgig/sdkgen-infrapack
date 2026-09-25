@@ -1696,6 +1696,16 @@ describe('seneca-provider target, from its package', () => {
     })
 
 
+    test('the manifest names the README among what ships', async () => {
+      unfetch()
+      const { files } = await generate(
+        "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'")
+
+      const pkg = JSON.parse(provided(files, 'package.json'))
+      deepStrictEqual(pkg.files, ['dist', 'doc', 'src/**/*.ts', 'LICENSE', 'README.md'])
+    })
+
+
     test('registers its own publish workflow with npm, and nothing else', async () => {
       unfetch()
       const { files } = await generate(
