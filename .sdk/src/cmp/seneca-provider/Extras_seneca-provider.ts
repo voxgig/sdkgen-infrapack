@@ -25,8 +25,8 @@ const SdkPin = cmp(function SdkPin(props: any) {
     Content(JSON.stringify({
       note: provider.standalone ?
         'GENERATED. The SDK this provider depends on and is generated from. ' +
-        '`make sdk-src` fetches it; `make regen` copies its API definition ' +
-        'into .sdk/ and regenerates this repo. Set the version in ' +
+        '`make sdk-src` fetches it; `make regen` replaces the API definition ' +
+        'and guide in .sdk/ with its own and regenerates this repo. Set the version in ' +
         '.sdk/model/project.aontu, not in this file.' :
         'GENERATED. The SDK this provider is generated from. ' +
         '`make sdk-src` fetches it; `make regen` regenerates this repo ' +

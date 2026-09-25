@@ -108,12 +108,19 @@ target, so it names the SDK itself: `sdk.version` is required, and
 project, where the `ts` target is the SDK.
 
 The builder carries a copy of the SDK's API definition and guide. `make regen`
-copies them from the SDK fetched at the tag in `sdk-pin.json` before
-generating, and generation refuses to write when the builder's entities differ
-from that SDK's compiled model, or the package name or version differ from its
-own `ts/package.json`. The manifest is read rather than the name re-derived,
-because the SDK's generator may name packages by a rule this builder's does not
-share. Generated without the SDK fetched, it warns that the check did not run.
+replaces them with those of the SDK fetched at the tag in `sdk-pin.json` before
+generating. Generation then refuses to write when the builder's model and that
+SDK's compiled model differ in what the SDK was generated from: an entity, an
+operation's routes, parameters and actions, a field's type or requiredness, the
+identity, the ancestors, the authentication or the servers. Titles and
+descriptions are not compared. It also refuses when the package name or version
+differ from the SDK's own `ts/package.json`, which is read rather than the name
+re-derived, because the SDK's generator may name packages by a rule this
+builder's does not share. Generated without the SDK fetched, it warns that the
+check did not run.
+
+A symlinked SDK checkout, from `make sdk-src SDK_SRC_FROM=<path>`, is read as
+it is: `make sdk-src` never fetches or checks out a tag inside one.
 
 To move to a newer SDK, set `sdk.version` and fetch its tag as you regenerate:
 

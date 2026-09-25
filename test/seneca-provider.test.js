@@ -25,7 +25,7 @@ const { ok, strictEqual, deepStrictEqual } = require('node:assert')
 const Fs = require('node:fs')
 const Path = require('node:path')
 const Os = require('node:os')
-const { execFileSync } = require('node:child_process')
+const { execFileSync, spawnSync } = require('node:child_process')
 
 const { Aontu } = require('aontu')
 const { Script } = require('node:vm')
@@ -1562,17 +1562,21 @@ describe('seneca-provider target, from its package', () => {
     // Whatever the installed sdkgen derives for this model.
     const DERIVED = require('@voxgig/sdkgen').packageName({ name: 'demo' }, 'npm')
 
-    function fetchSdk(version, change = (_entity) => { }, name = DERIVED) {
+    function fetchSdk(version, change = (_kit) => { }, name = DERIVED) {
       const model = standaloneModel(consumer.sdk)
-      const entity = JSON.parse(JSON.stringify(model.main.kit.entity))
-      change(entity)
+      const kit = JSON.parse(JSON.stringify({
+        entity: model.main.kit.entity,
+        info: model.main.kit.info,
+        config: model.main.kit.config,
+      }))
+      change(kit)
 
       const dir = Path.join(SDKSRC(), 'demo-sdk', '.sdk', 'model')
       Fs.mkdirSync(dir, { recursive: true })
       Fs.writeFileSync(Path.join(dir, 'sdk.json'), JSON.stringify({
         name: 'demo',
         origin: 'voxgig-sdk',
-        main: { kit: { entity, target: { ts: { publish: { version } } } } },
+        main: { kit: { ...kit, target: { ts: { publish: { version } } } } },
       }))
 
       const ts = Path.join(SDKSRC(), 'demo-sdk', 'ts')
@@ -1592,10 +1596,8 @@ describe('seneca-provider target, from its package', () => {
       const mk = provided(files, 'Makefile')
 
       ok(null != mk, 'no Makefile generated')
-      ok(mk.includes('cp -R "$(SDK_DIR)/.sdk/def/." .sdk/def/'),
-        'regen does not copy the SDK\'s API definition into the builder')
-      ok(mk.includes('cp -R "$(SDK_DIR)/.sdk/model/guide/." .sdk/model/guide/'),
-        'regen does not copy the SDK\'s guide into the builder')
+      ok(mk.includes('for d in def model/guide; do'),
+        'regen does not take the SDK\'s API definition and guide')
       ok(mk.includes('cd .sdk && npm install'), 'regen does not run the builder')
       ok(!mk.includes('SDKGEN_EXTERNAL'),
         'regen still drives the SDK project\'s builder')
@@ -1662,12 +1664,121 @@ describe('seneca-provider target, from its package', () => {
 
 
     test('an entity differing from the fetched SDK is refused', async () => {
-      fetchSdk('2.3.4', (entity) => { delete entity.planet.op.remove })
+      fetchSdk('2.3.4', (kit) => { delete kit.entity.planet.op.remove })
       const msg = await refusal(standaloneModel(consumer.sdk,
         "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'"))
 
       ok(null != msg, 'generated from a model the SDK does not have')
-      ok(msg.includes('entity planet'), 'the refusal does not name it: ' + msg)
+      ok(msg.includes('entity.planet.op.remove'), 'the refusal does not name it: ' + msg)
+    })
+
+
+    // Names alone agree in every case below.
+    const REFUSED = {
+      'a route': [(kit) => { kit.entity.planet.op.load.points[0].o = '/planets/{id}' },
+        'entity.planet.op.load.points[0].o'],
+      'a path parameter': [(kit) => { kit.entity.planet.op.load.points[0].g.params[0].n = 'pid' },
+        'entity.planet.op.load.points[0].g.params[0].n'],
+      'a custom action': [(kit) => { kit.entity.planet.op.update.points[0].q = { $action: 'merge' } },
+        'entity.planet.op.update.points[0].q.$action'],
+      'the identity': [(kit) => { kit.entity.planet.id = { field: 'title', name: 'title' } },
+        'entity.planet.id.field'],
+      'a field\'s type': [(kit) => { kit.entity.planet.fields.radius.t = '`$STRING`' },
+        'entity.planet.fields.radius.t'],
+      'a field\'s requiredness': [(kit) => { kit.entity.planet.fields.radius.r = true },
+        'entity.planet.fields.radius.r'],
+      'the authentication': [(kit) => { kit.info.auth = true },
+        'info.auth'],
+      'the servers': [(kit) => { kit.info.servers = [{ url: 'https://api.example.com' }] },
+        'info.servers[0]'],
+    }
+
+    for (const [what, [change, where]] of Object.entries(REFUSED)) {
+      test(what + ' differing from the fetched SDK is refused', async () => {
+        fetchSdk('2.3.4', change)
+        const msg = await refusal(standaloneModel(consumer.sdk,
+          "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'"))
+
+        ok(null != msg, 'generated from a model the SDK does not have')
+        ok(msg.includes(where), 'the refusal does not name ' + where + ': ' + msg)
+      })
+    }
+
+
+    test('titles and descriptions are not compared', async () => {
+      fetchSdk('2.3.4', (kit) => {
+        kit.entity.planet.fields.radius.h = 'Mean radius'
+        kit.entity.planet.fields.radius.sh = 'In kilometres.'
+        kit.info.title = 'Demo, renamed'
+      })
+      const { files } = await generate(
+        "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'")
+      ok(null != provided(files, 'package.json'), 'nothing generated')
+    })
+
+
+    // `make regen` itself, in a scratch repository: the SDK checkout is a
+    // symlink on a branch past its tag, and the builder holds a stale copy.
+    test('regen reads a linked SDK as it is, and replaces the copies', async (t) => {
+      const missing = ['make', 'git'].filter((tool) =>
+        0 !== spawnSync(tool, ['--version'], { stdio: 'ignore' }).status)
+      if (0 < missing.length) {
+        return t.skip('not installed here: ' + missing.join(', '))
+      }
+
+      unfetch()
+      const { files } = await generate(
+        "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'")
+
+      const dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'provider-regen-'))
+      const write = (file, text) => {
+        Fs.mkdirSync(Path.dirname(Path.join(dir, file)), { recursive: true })
+        Fs.writeFileSync(Path.join(dir, file), text)
+      }
+      const git = (...args) => execFileSync('git',
+        ['-c', 'user.email=test@example.com', '-c', 'user.name=test',
+          '-C', Path.join(dir, 'sdk'), ...args], { encoding: 'utf8' }).trim()
+
+      try {
+        write('sdk/.sdk/def/api.yml', 'current\n')
+        write('sdk/.sdk/model/guide/guide.aontu', 'current\n')
+        git('init', '-q')
+        git('add', '-A')
+        git('commit', '-q', '-m', 'v2.3.4')
+        git('tag', 'v2.3.4')
+        write('sdk/later.txt', 'after the tag\n')
+        git('add', '-A')
+        git('commit', '-q', '-m', 'after the tag')
+        git('remote', 'add', 'origin', Path.join(dir, 'sdk'))
+        const branch = git('rev-parse', '--abbrev-ref', 'HEAD')
+
+        const pin = provided(files, 'sdk-pin.json')
+        write('repo/Makefile', provided(files, 'Makefile'))
+        write('repo/sdk-pin.json', pin)
+        write('repo/.sdk/package.json', JSON.stringify({
+          name: 'builder', private: true, scripts: { generate: 'node -e 0' },
+        }))
+        write('repo/.sdk/def/old.yml', 'stale\n')
+        write('repo/.sdk/model/guide/old.aontu', 'stale\n')
+        const link = Path.join(dir, 'repo', JSON.parse(pin).dir)
+        Fs.mkdirSync(Path.dirname(link), { recursive: true })
+        Fs.symlinkSync(Path.join(dir, 'sdk'), link)
+
+        const run = spawnSync('make', ['regen'], {
+          cwd: Path.join(dir, 'repo'), encoding: 'utf8',
+          env: { ...process.env, npm_config_audit: 'false', npm_config_fund: 'false' },
+        })
+        strictEqual(run.status, 0, run.stdout + run.stderr)
+
+        strictEqual(git('rev-parse', '--abbrev-ref', 'HEAD'), branch,
+          'regen checked the tag out in the linked SDK')
+        deepStrictEqual(Fs.readdirSync(Path.join(dir, 'repo/.sdk/def')), ['api.yml'])
+        deepStrictEqual(Fs.readdirSync(Path.join(dir, 'repo/.sdk/model/guide')),
+          ['guide.aontu'])
+      }
+      finally {
+        Fs.rmSync(dir, { recursive: true, force: true })
+      }
     })
 
 

@@ -48,8 +48,9 @@ const INTRO_SELF = `# ----------------------------------------------------------
 #
 # The builder generates this package and nothing else. Its API definition
 # and guide are the SDK's: everything below fetches the SDK named in
-# sdk-pin.json, and \`make regen\` copies them from it before generating, so
-# the package is built from the same model as the SDK version it depends on.
+# sdk-pin.json, and \`make regen\` replaces them with its own before
+# generating, so the package is built from the same model as the SDK version
+# it depends on.
 #
 # NOT a git submodule, deliberately. A submodule pins a commit in git's own
 # plumbing, where a stale one is invisible in a normal diff and updating it is
@@ -82,6 +83,11 @@ sdk-src:
 \t  echo "sdk-src: using $(SDK_SRC_FROM) (not fetching)"; \\
 \t  rm -rf "$(SDK_DIR)"; mkdir -p "$$(dirname "$(SDK_DIR)")"; \\
 \t  ln -s "$$(cd "$(SDK_SRC_FROM)" && pwd)" "$(SDK_DIR)"; \\
+\t  exit 0; \\
+\tfi; \\
+\tif [ -L "$(SDK_DIR)" ]; then \\
+\t  echo "sdk-src: $(SDK_DIR) links to $$(readlink "$(SDK_DIR)"), which is left as it is;"; \\
+\t  echo "         make sdk-clean first to fetch $(SDK_TAG) instead"; \\
 \t  exit 0; \\
 \tfi; \\
 \tif [ -d "$(SDK_DIR)/.git" ]; then \\
@@ -164,10 +170,10 @@ regen: sdk-src
 
 const REGEN_SELF = `# Regenerate this repository with its own builder.
 #
-# The API definition and guide come from the SDK source first, so the builder
-# generates from the SDK's model at the pinned tag, and generation checks the
-# result against that source before writing. A linked checkout (SDK_SRC_FROM)
-# is safe here: only this repository is written.
+# The API definition and guide are replaced by the SDK source's first, so the
+# builder generates from the SDK's model at the pinned tag, and generation
+# checks the result against that source before writing. A linked checkout
+# (SDK_SRC_FROM) is read as it is, and only this repository is written.
 #
 # To move to a newer SDK, set its version in .sdk/model/project.aontu and
 # fetch that tag as you regenerate:
@@ -176,9 +182,13 @@ const REGEN_SELF = `# Regenerate this repository with its own builder.
 regen: sdk-src
 \t@set -e; \\
 \ttest -f .sdk/package.json || { echo "regen: no builder at .sdk/"; exit 1; }; \\
-\techo "regen: copying the API definition and guide from $(SDK_DIR)"; \\
-\tcp -R "$(SDK_DIR)/.sdk/def/." .sdk/def/; \\
-\tcp -R "$(SDK_DIR)/.sdk/model/guide/." .sdk/model/guide/; \\
+\tfor d in def model/guide; do \\
+\t  test -d "$(SDK_DIR)/.sdk/$$d" || { echo "regen: no $(SDK_DIR)/.sdk/$$d"; exit 1; }; \\
+\tdone; \\
+\techo "regen: replacing the API definition and guide with those in $(SDK_DIR)"; \\
+\tfor d in def model/guide; do \\
+\t  rm -rf ".sdk/$$d"; mkdir -p ".sdk/$$d"; cp -R "$(SDK_DIR)/.sdk/$$d/." ".sdk/$$d/"; \\
+\tdone; \\
 \techo "regen: installing the builder"; \\
 \tcd .sdk && npm install && \\
 \techo "regen: generating" && \\
