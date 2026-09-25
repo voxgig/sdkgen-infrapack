@@ -27,7 +27,9 @@ sdkgen repository.
 
 These are consumer targets: they switch every standard generation phase off and
 emit their whole package from `Main`, and each one fails without the target it
-wraps, deliberately. Add `ts` to your project before `seneca-provider`.
+wraps, deliberately. Add `ts` to your project before `seneca-provider`. The
+one exception is a provider that carries its own builder (below), which names
+the SDK it wraps instead.
 
 There is no manifest field for that requirement. Nothing in
 `sdkgen-package.json` says "this target needs that one", so this paragraph and
@@ -83,6 +85,75 @@ first look at the output.
 
 Set that in `model/project.aontu`, not in the target's own file — `target add`
 overwrites the latter.
+
+## Or the provider carries its own builder
+
+The provider repository can instead hold a `.sdk/` of its own, which generates
+the provider and nothing else, and leaves the SDK repository untouched. Its
+`model/project.aontu` says so, and the standard `Root` that create-sdkgen
+scaffolds reads it:
+
+```
+main: kit: phase: top: active: false
+main: kit: phase: build: active: false
+main: kit: doc: active: false
+main: kit: target: 'seneca-provider': output: root: true
+main: kit: target: 'seneca-provider': sdk: version: '0.0.1'
+```
+
+`output: root: true` generates the provider at the repository root, and is how
+this target knows the builder is the provider's own. That builder has no `ts`
+target, so it names the SDK itself: `sdk.version` is required, and
+`sdk.package` overrides the derived package name. Both are refused in an SDK
+project, where the `ts` target is the SDK.
+
+The builder carries a copy of the SDK's API definition and guide. `make regen`
+replaces them with those of the SDK fetched at the tag in `sdk-pin.json` before
+generating. Generation then refuses to write when the builder's model and that
+SDK's compiled model differ in what the SDK was generated from: an entity, an
+operation's routes, parameters and actions, a field's type or requiredness, the
+identity, the ancestors, the authentication or the servers. Titles and
+descriptions are not compared. It also refuses when the package name or version
+differ from the SDK's own `ts/package.json`, which is read rather than the name
+re-derived, because the SDK's generator may name packages by a rule this
+builder's does not share. Generated without the SDK fetched, it warns that the
+check did not run.
+
+A symlinked SDK checkout, from `make sdk-src SDK_SRC_FROM=<path>`, is read as
+it is: `make sdk-src` never fetches or checks out a tag inside one.
+
+To move to a newer SDK, set `sdk.version` and fetch its tag as you regenerate:
+
+```bash
+make regen SDK_TAG=v0.0.2
+```
+
+## An SDK that is not on npm yet
+
+The generated `package.json` depends on the SDK by version range, which
+installs only once the SDK is published. Until then, `sdk.dep` points it
+elsewhere:
+
+| `sdk.dep` | The dependency |
+|---|---|
+| `kind: 'release', ref: 'v1.0.0'` | the `npm pack` tarball attached to that GitHub release |
+| `kind: 'git', ref: '<tag>'` | `github:<owner>/<repo>#<tag>`, installed from the root of that tag's tree |
+| `spec: '<anything>'` | the value, verbatim |
+
+npm cannot install a package from a subfolder of a git repository, and an
+sdkgen SDK keeps its TypeScript package in `ts/`. A git dependency therefore
+needs a tag whose tree is that folder, cut in the SDK repository:
+
+```bash
+git tag ts-v1.0.0 $(git commit-tree HEAD:ts -p HEAD -m "ts/ at v1.0.0")
+git push origin ts-v1.0.0
+```
+
+and then `sdk: dep: { kind: 'git', ref: 'ts-v1.0.0' }`. The tag carries what
+the folder holds, so an SDK that commits `ts/dist` needs nothing built on
+install. The generated CI passes `--allow-git=all`, which npm 12 needs for a
+git dependency, and so would anyone installing a published provider that
+depends on one: publish the SDK to npm before the provider.
 
 ## Parity
 

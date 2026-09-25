@@ -1,7 +1,7 @@
 import {
   cmp, each,
   File, Content, Copy, Folder,
-  entityCollection, entityOps, entityIdField, entityClassName,
+  entityCollection, entityOps, entityIdField, entityDataIdField, entityClassName,
   entityActions,
   opRequestShape, opParams, ownPoint, entityPath,
   collectDeps, repoInfo, packageName, packageVersion, apiName, envName,
@@ -20,6 +20,10 @@ import {
   Tests, Scripts, Workflow, Readme, Docs, SdkPin, SDK_SRC_DIR,
 } from './Extras_seneca-provider'
 import { Gitignore } from './Gitignore_seneca-provider'
+import { Makefile } from './Makefile_seneca-provider'
+import {
+  standaloneBuilder, sdkIdentity, checkSdkSource,
+} from './Standalone_seneca-provider'
 
 
 
@@ -208,7 +212,7 @@ function recordKey(ent: any): string {
     }
   }
 
-  return '' !== fallback ? fallback : 'id'
+  return '' !== fallback ? fallback : (entityDataIdField(ent) || 'id')
 }
 
 
@@ -278,9 +282,18 @@ function parentKeys(ent: any): string[] {
 }
 
 
+const sentinelKey = (type: any): string =>
+  String(type ?? '').replace(/[`$]/g, '').trim().toUpperCase()
+
+const unionMembers = (type: any): any[] =>
+  Array.isArray(type) && 'ONE' === sentinelKey(type[0]) && Array.isArray(type[1]) ?
+    type[1] : []
+
+
 function fieldKind(type: any): string {
   if (Array.isArray(type)) {
-    return 'string'
+    const member = unionMembers(type).find((m: any) => 'NULL' !== sentinelKey(m))
+    return null == member ? 'string' : fieldKind(member)
   }
 
   const t = String(type || '').toUpperCase()
@@ -291,6 +304,11 @@ function fieldKind(type: any): string {
   if (t.includes('NUMBER') || t.includes('INTEGER')) return 'number'
 
   return 'string'
+}
+
+
+function fieldNullable(type: any): boolean {
+  return unionMembers(type).some((m: any) => 'NULL' === sentinelKey(m))
 }
 
 
@@ -326,8 +344,10 @@ const Main = cmp(function Main(props: any) {
   const { target, ctx$ } = props
   const { model } = ctx$
 
+  const standalone = standaloneBuilder(target)
+
   const targets = model.main[KIT].target || {}
-  if (null == targets.ts) {
+  if (!standalone && null == targets.ts) {
     throw new SdkGenError(
       'seneca-provider requires the `ts` target in the same SDK: it imports ' +
       'the TypeScript SDK that `ts` generates. Add it with:\n' +
@@ -347,8 +367,7 @@ const Main = cmp(function Main(props: any) {
   // included, so the two can never disagree.
   // The TypeScript SDK this provider WRAPS — a different target, so it
   // keeps its own name and does not follow this provider's alias.
-  const sdkPkg = packageName(model, 'npm')
-  const sdkVersion = packageVersion(model, 'ts')
+  const { sdkPkg, sdkVersion } = sdkIdentity(model, target)
 
   const entityColl = entityCollection(model)
 
@@ -434,6 +453,7 @@ const Main = cmp(function Main(props: any) {
             .map((f: any) => ({
               name: f.n,
               kind: fieldKind(f.t),
+              nullable: fieldNullable(f.t),
               parentEntity: parentEntityOf(f.n, entityNames),
             }))
 
@@ -444,6 +464,7 @@ const Main = cmp(function Main(props: any) {
               req.push({
                 name: key,
                 kind: 'string',
+                nullable: false,
                 parentEntity: parentOf[key],
               })
             }
@@ -510,6 +531,7 @@ const Main = cmp(function Main(props: any) {
     Name, lower, ENV, sdkClass, pluginName, fileBase,
     sdkPkg, sdkVersion, entities,
     sdkDep,
+    standalone,
     // Whether that dependency comes from outside a registry. The generated
     // CI note says so, because "npm install is all you need" stops being
     // true the moment git or a tarball URL is in the path.
@@ -531,6 +553,8 @@ const Main = cmp(function Main(props: any) {
     version: packageVersion(model, target.name),
     liveBase,
     liveApp,
+    // The server the API definition declares, which is the SDK's own default.
+    specBase,
     publisher: PUBLISHER,
     publisherUrl: PUBLISHER_URL,
     probePath: (entities.find((e: any) =>
@@ -549,6 +573,10 @@ const Main = cmp(function Main(props: any) {
     authPrefix: resolveAuthPrefix(model),
   }
 
+  if (standalone) {
+    checkSdkSource(ctx$, provider, model)
+  }
+
   // `.gitignore` is EMITTED rather than copied — npm strips that filename
   // from the tarball, so as a template it reached only checkout users. See
   // Gitignore_seneca-provider. Called before the Copy, as every language
@@ -560,6 +588,7 @@ const Main = cmp(function Main(props: any) {
     replace: { ...ctx$.stdrep },
   })
 
+  Makefile({ provider })
   SdkPin({ provider })
   PackageJson({ provider, target })
   ProviderSource({ provider })
@@ -1218,7 +1247,12 @@ ${actionBranch('load',
             `        const hit = await ornull(() => this.shared.sdk.${e.acc}()[op$](${aq}))
         return null == hit ? null : entize(${out('hit')})
 `)}${guard('load', 'q')}${splitLine('load')}      const res = await ornull(() => this.shared.sdk.${e.acc}().load(${sdkArg('load')}))
-      return null == res ? null : entize(${out('res', loadVals)})
+${0 < addressKeys(e.ent, 'load').length || 0 < eparts.length ? '' :
+            `      // The route names no record, so an id finds only the record carrying it.
+      if (null != res && null != q.id && String(${jsProp('plain(res)', rk)}) !== String(q.id)) {
+        return null
+      }
+`}      return null == res ? null : entize(${out('res', loadVals)})
     }
 
 `)
@@ -1268,7 +1302,12 @@ ${dropPark}
       // which matches a request against a stored record, then looked for a
       // record whose own \`id\` was that joined string and found none.
       delete data.id
-` : !keyed ? '' : `
+` : !keyed ? '' : hasCreate && !hasUpdate && true !== e.rkoncreate ? `
+      // The API assigns a ${e.name}'s \`${rk}\`, and a create names no record, so
+      // Seneca's \`id\` is not sent: the id is read back from the response.
+      const key: any = null
+${dropPark}      delete data.id
+` : `
       // This API keys a ${e.name} by \`${rk}\`; Seneca carries it as \`id\`.
       // The key goes on the body under the API's own name, where the route
       // reads it, and into the match, which the SDK consults first.
@@ -1369,9 +1408,10 @@ ${provider.authActive ? `
     // the SDK was constructed with NO credential at all — the request went
     // out unauthenticated and failed much later as a 401 or a 404 on
     // anything private, with nothing at startup to point at the cause.
-    // \`apikey\` wins when both are set, so a config that has migrated is
-    // unaffected.
-    const apikey = res?.keymap?.apikey?.value ?? res?.keymap?.api?.value
+    // \`apikey\` wins when both are set and it is not empty, so a config that
+    // has migrated is unaffected.
+    const apikey = [res?.keymap?.apikey?.value, res?.keymap?.api?.value]
+      .find((value: any) => null != value && '' !== value)
 
     // Hand the credential to the SDK as \`apikey\`, NOT as an authorization
     // HEADER. The SDK's own auth stage owns that header: it reads

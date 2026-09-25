@@ -16,6 +16,11 @@ main: kit: target: 'seneca-provider': {
     test:       { active: false }
   }
 
+  sdk: {
+    package: *'' | string
+    version: *'' | string
+  }
+
   sdk: dep: {
     kind: *'npm' | 'git' | 'release'
     ref: *'' | string

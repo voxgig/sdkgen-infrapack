@@ -25,7 +25,7 @@ const { ok, strictEqual, deepStrictEqual } = require('node:assert')
 const Fs = require('node:fs')
 const Path = require('node:path')
 const Os = require('node:os')
-const { execFileSync } = require('node:child_process')
+const { execFileSync, spawnSync } = require('node:child_process')
 
 const { Aontu } = require('aontu')
 const { Script } = require('node:vm')
@@ -430,6 +430,61 @@ main: kit: entity: alert: {
 main: kit: flow: BasicAlertFlow: {
   entity: "alert", kind: "basic", name: "BasicAlertFlow"
   step: [ { o: "list" } ]
+}
+`
+
+
+// A SINGLETON: a load whose route names no record, and a field that is a
+// number or null — brontie's balance, in miniature.
+const SINGLETON_ENTITY = `
+main: kit: entity: balance: {
+  alias: field: {}
+  name: "balance"
+  field: {
+    alertAt: { name: "alertAt", kind: "field", type: "\`$NUMBER\`", required: true }
+    amount:  { name: "amount",  kind: "field", type: "\`$NUMBER\`", required: true }
+  }
+  fields: {
+    "alertAt": { h: 'Alert At', n: "alertAt", r: true,
+      t: [ "\`$ONE\`", [ "\`$NUMBER\`", "\`$NULL\`" ] ] }
+    "amount": { h: 'Amount', n: "amount", r: true, t: "\`$NUMBER\`" }
+  }
+  op: {
+    load: { name: "load", points: [ {
+      g: {}, m: "GET", o: "/balance", s: [{ lit: "balance" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+  }
+}
+
+main: kit: flow: BasicBalanceFlow: {
+  entity: "balance", kind: "basic", name: "BasicBalanceFlow"
+  step: [ { o: "load" } ]
+}
+`
+
+
+// CREATE-ONLY, with no id in the model: brontie's voucher.
+const CREATE_ONLY_ENTITY = `
+main: kit: entity: voucher: {
+  alias: field: {}
+  name: "voucher"
+  field: {
+    product: { name: "product", kind: "field", type: "\`$STRING\`", required: true }
+  }
+  fields: {
+    "product": { h: 'Product', n: "product", r: true, t: "\`$STRING\`" }
+  }
+  op: {
+    create: { name: "create", points: [ {
+      g: { body: [ { k: "body", n: "product", r: true, t: "\`$STRING\`" } ] }
+      m: "POST", o: "/voucher", s: [{ lit: "voucher" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+  }
+}
+
+main: kit: flow: BasicVoucherFlow: {
+  entity: "voucher", kind: "basic", name: "BasicVoucherFlow"
+  step: [ { o: "create", i: { ref: "voucher_ref01" } } ]
 }
 `
 
@@ -1509,6 +1564,312 @@ describe('seneca-provider target, from its package', () => {
   })
 
 
+  // `output: root: true`: the provider repository carries its own `.sdk/`,
+  // which has no `ts` target, and the SDK is a dependency released elsewhere.
+  describe('a builder in the provider repository', () => {
+
+    const ROOTED = "main: kit: target: 'seneca-provider': output: root: true"
+
+    // Rooted by the standard Root, or under seneca-provider/ by a test kit
+    // whose default Root predates `output: root`.
+    const provided = (files, name) =>
+      files[name] ?? files['seneca-provider/' + name]
+
+    function standaloneModel(sdk, extra = '') {
+      const src = [
+        '@"@voxgig/apidef/model/apidef.aontu"',
+        '@"@voxgig/sdkgen/model/sdkgen.aontu"',
+        '@"target/seneca-provider.aontu"',
+        '@"feature/feature-index.aontu"',
+        "name: 'demo'",
+        API,
+        ROOTED,
+        extra,
+      ].join('\n')
+
+      const path = Path.join(sdk, 'model', 'generate-test.aontu')
+      Fs.writeFileSync(path, src)
+
+      const errs = []
+      const model = new Aontu().generate(src, { path, errs })
+      strictEqual(errs.length, 0,
+        'model did not compile: ' + errs.map((e) => e.msg).join(' | '))
+
+      return model
+    }
+
+    const generate = (extra) =>
+      generateInto(consumer, { model: standaloneModel(consumer.sdk, extra) })
+
+    const refusal = async (model) => {
+      try {
+        await generateInto(consumer, { model })
+      }
+      catch (err) {
+        return String(err.message)
+      }
+      return null
+    }
+
+    const SDKSRC = () => Path.join(consumer.root, '.sdksrc')
+
+    // The SDK's compiled model as `make sdk-src` would fetch it.
+    // Whatever the installed sdkgen derives for this model.
+    const DERIVED = require('@voxgig/sdkgen').packageName({ name: 'demo' }, 'npm')
+
+    function fetchSdk(version, change = (_kit) => { }, name = DERIVED) {
+      const model = standaloneModel(consumer.sdk)
+      const kit = JSON.parse(JSON.stringify({
+        entity: model.main.kit.entity,
+        info: model.main.kit.info,
+        config: model.main.kit.config,
+      }))
+      change(kit)
+
+      const dir = Path.join(SDKSRC(), 'demo-sdk', '.sdk', 'model')
+      Fs.mkdirSync(dir, { recursive: true })
+      Fs.writeFileSync(Path.join(dir, 'sdk.json'), JSON.stringify({
+        name: 'demo',
+        origin: 'voxgig-sdk',
+        main: { kit: { ...kit, target: { ts: { publish: { version } } } } },
+      }))
+
+      const ts = Path.join(SDKSRC(), 'demo-sdk', 'ts')
+      Fs.mkdirSync(ts, { recursive: true })
+      Fs.writeFileSync(Path.join(ts, 'package.json'),
+        JSON.stringify({ name, version }))
+    }
+
+    const unfetch = () => Fs.rmSync(SDKSRC(), { recursive: true, force: true })
+
+    after(unfetch)
+
+
+    test('regenerates with its own builder, not the SDK project\'s', async () => {
+      unfetch()
+      const { files } = await generate("main: kit: target: 'seneca-provider': sdk: version: '2.3.4'")
+      const mk = provided(files, 'Makefile')
+
+      ok(null != mk, 'no Makefile generated')
+      ok(mk.includes('for d in def model/guide; do'),
+        'regen does not take the SDK\'s API definition and guide')
+      ok(mk.includes('cd .sdk && npm install'), 'regen does not run the builder')
+      ok(!mk.includes('SDKGEN_EXTERNAL'),
+        'regen still drives the SDK project\'s builder')
+    })
+
+
+    test('needs no ts target, and depends on the SDK it names', async () => {
+      unfetch()
+      const { files } = await generate(
+        "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'")
+
+      const pkg = JSON.parse(provided(files, 'package.json'))
+      strictEqual(pkg.dependencies[DERIVED], '^2.3.4')
+
+      const pin = JSON.parse(provided(files, 'sdk-pin.json'))
+      strictEqual(pin.tag, 'v2.3.4')
+      ok(pin.note.includes('.sdk/model/project.aontu'),
+        'the pin does not say where the version is set: ' + pin.note)
+    })
+
+
+    test('`sdk.package` names a package the derivation cannot', async () => {
+      unfetch()
+      const { files } = await generate("main: kit: target: 'seneca-provider': sdk: " +
+        "{ package: '@acme/widgets', version: '1.0.0' }")
+
+      const pkg = JSON.parse(provided(files, 'package.json'))
+      strictEqual(pkg.dependencies['@acme/widgets'], '^1.0.0')
+    })
+
+
+    test('a builder without a ts target must name the SDK version', async () => {
+      const msg = await refusal(standaloneModel(consumer.sdk))
+      ok(null != msg, 'generated without knowing the SDK version')
+      ok(msg.includes('sdk.version'), 'the refusal does not name the key: ' + msg)
+    })
+
+
+    test('`sdk.version` is refused in the SDK project', async () => {
+      const msg = await refusal(consumerModel(consumer.sdk,
+        "main: kit: target: 'seneca-provider': sdk: version: '9.9.9'"))
+      ok(null != msg, 'an SDK-project provider accepted sdk.version')
+      ok(msg.includes('output: root: true'),
+        'the refusal does not say where the key applies: ' + msg)
+    })
+
+
+    test('an unfetched SDK is reported as unchecked', async () => {
+      unfetch()
+      consumer.log.lines.length = 0
+      await generate("main: kit: target: 'seneca-provider': sdk: version: '2.3.4'")
+
+      ok(consumer.log.lines.some((l) => 'sdk-source-unchecked' === l.point),
+        'no warning that the model went unchecked')
+    })
+
+
+    test('a model matching the fetched SDK generates', async () => {
+      fetchSdk('2.3.4')
+      const { files } = await generate(
+        "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'")
+      ok(null != provided(files, 'package.json'), 'nothing generated')
+    })
+
+
+    test('an entity differing from the fetched SDK is refused', async () => {
+      fetchSdk('2.3.4', (kit) => { delete kit.entity.planet.op.remove })
+      const msg = await refusal(standaloneModel(consumer.sdk,
+        "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'"))
+
+      ok(null != msg, 'generated from a model the SDK does not have')
+      ok(msg.includes('entity.planet.op.remove'), 'the refusal does not name it: ' + msg)
+    })
+
+
+    // Names alone agree in every case below.
+    const REFUSED = {
+      'a route': [(kit) => { kit.entity.planet.op.load.points[0].o = '/planets/{id}' },
+        'entity.planet.op.load.points[0].o'],
+      'a path parameter': [(kit) => { kit.entity.planet.op.load.points[0].g.params[0].n = 'pid' },
+        'entity.planet.op.load.points[0].g.params[0].n'],
+      'a custom action': [(kit) => { kit.entity.planet.op.update.points[0].q = { $action: 'merge' } },
+        'entity.planet.op.update.points[0].q.$action'],
+      'the identity': [(kit) => { kit.entity.planet.id = { field: 'title', name: 'title' } },
+        'entity.planet.id.field'],
+      'a field\'s type': [(kit) => { kit.entity.planet.fields.radius.t = '`$STRING`' },
+        'entity.planet.fields.radius.t'],
+      'a field\'s requiredness': [(kit) => { kit.entity.planet.fields.radius.r = true },
+        'entity.planet.fields.radius.r'],
+      'the authentication': [(kit) => { kit.info.auth = true },
+        'info.auth'],
+      'the servers': [(kit) => { kit.info.servers = [{ url: 'https://api.example.com' }] },
+        'info.servers[0]'],
+    }
+
+    for (const [what, [change, where]] of Object.entries(REFUSED)) {
+      test(what + ' differing from the fetched SDK is refused', async () => {
+        fetchSdk('2.3.4', change)
+        const msg = await refusal(standaloneModel(consumer.sdk,
+          "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'"))
+
+        ok(null != msg, 'generated from a model the SDK does not have')
+        ok(msg.includes(where), 'the refusal does not name ' + where + ': ' + msg)
+      })
+    }
+
+
+    test('titles and descriptions are not compared', async () => {
+      fetchSdk('2.3.4', (kit) => {
+        kit.entity.planet.fields.radius.h = 'Mean radius'
+        kit.entity.planet.fields.radius.sh = 'In kilometres.'
+        kit.info.title = 'Demo, renamed'
+      })
+      const { files } = await generate(
+        "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'")
+      ok(null != provided(files, 'package.json'), 'nothing generated')
+    })
+
+
+    // `make regen` itself, in a scratch repository: the SDK checkout is a
+    // symlink on a branch past its tag, and the builder holds a stale copy.
+    test('regen reads a linked SDK as it is, and replaces the copies', async (t) => {
+      const missing = ['make', 'git'].filter((tool) =>
+        0 !== spawnSync(tool, ['--version'], { stdio: 'ignore' }).status)
+      if (0 < missing.length) {
+        return t.skip('not installed here: ' + missing.join(', '))
+      }
+
+      unfetch()
+      const { files } = await generate(
+        "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'")
+
+      const dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'provider-regen-'))
+      const write = (file, text) => {
+        Fs.mkdirSync(Path.dirname(Path.join(dir, file)), { recursive: true })
+        Fs.writeFileSync(Path.join(dir, file), text)
+      }
+      const git = (...args) => execFileSync('git',
+        ['-c', 'user.email=test@example.com', '-c', 'user.name=test',
+          '-C', Path.join(dir, 'sdk'), ...args], { encoding: 'utf8' }).trim()
+
+      try {
+        write('sdk/.sdk/def/api.yml', 'current\n')
+        write('sdk/.sdk/model/guide/guide.aontu', 'current\n')
+        git('init', '-q')
+        git('add', '-A')
+        git('commit', '-q', '-m', 'v2.3.4')
+        git('tag', 'v2.3.4')
+        write('sdk/later.txt', 'after the tag\n')
+        git('add', '-A')
+        git('commit', '-q', '-m', 'after the tag')
+        git('remote', 'add', 'origin', Path.join(dir, 'sdk'))
+        const branch = git('rev-parse', '--abbrev-ref', 'HEAD')
+
+        const pin = provided(files, 'sdk-pin.json')
+        write('repo/Makefile', provided(files, 'Makefile'))
+        write('repo/sdk-pin.json', pin)
+        write('repo/.sdk/package.json', JSON.stringify({
+          name: 'builder', private: true, scripts: { generate: 'node -e 0' },
+        }))
+        write('repo/.sdk/def/old.yml', 'stale\n')
+        write('repo/.sdk/model/guide/old.aontu', 'stale\n')
+        const link = Path.join(dir, 'repo', JSON.parse(pin).dir)
+        Fs.mkdirSync(Path.dirname(link), { recursive: true })
+        Fs.symlinkSync(Path.join(dir, 'sdk'), link)
+
+        const run = spawnSync('make', ['regen'], {
+          cwd: Path.join(dir, 'repo'), encoding: 'utf8',
+          env: { ...process.env, npm_config_audit: 'false', npm_config_fund: 'false' },
+        })
+        strictEqual(run.status, 0, run.stdout + run.stderr)
+
+        strictEqual(git('rev-parse', '--abbrev-ref', 'HEAD'), branch,
+          'regen checked the tag out in the linked SDK')
+        deepStrictEqual(Fs.readdirSync(Path.join(dir, 'repo/.sdk/def')), ['api.yml'])
+        deepStrictEqual(Fs.readdirSync(Path.join(dir, 'repo/.sdk/model/guide')),
+          ['guide.aontu'])
+      }
+      finally {
+        Fs.rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+
+    test('a version differing from the fetched SDK is refused', async () => {
+      fetchSdk('2.3.3')
+      const msg = await refusal(standaloneModel(consumer.sdk,
+        "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'"))
+
+      ok(null != msg, 'generated against the wrong SDK version')
+      ok(msg.includes('2.3.4') && msg.includes('2.3.3'),
+        'the refusal does not name both versions: ' + msg)
+      ok(msg.includes('make regen SDK_TAG=v2.3.4'),
+        'the refusal does not say how to fetch the right one: ' + msg)
+    })
+
+
+    // The SDK's manifest is the truth: the SDK's generator may name packages
+    // by a rule this builder's does not share.
+    test('the SDK\'s package name comes from its own manifest', async () => {
+      fetchSdk('2.3.4', undefined, '@acme/renamed-sdk')
+      const msg = await refusal(standaloneModel(consumer.sdk,
+        "main: kit: target: 'seneca-provider': sdk: version: '2.3.4'"))
+
+      ok(null != msg, 'generated against a package the SDK is not published as')
+      ok(msg.includes('@acme/renamed-sdk'),
+        'the refusal does not name the SDK\'s own package: ' + msg)
+
+      const { files } = await generate("main: kit: target: 'seneca-provider': sdk: " +
+        "{ package: '@acme/renamed-sdk', version: '2.3.4' }")
+      const pkg = JSON.parse(provided(files, 'package.json'))
+      strictEqual(pkg.dependencies['@acme/renamed-sdk'], '^2.3.4')
+    })
+
+  })
+
+
   // AN ENTITY NAME THAT IS NOT A JAVASCRIPT IDENTIFIER.
   //
   // apidef canonizes an entity name to `[A-Za-z_0-9]`, so hyphens and dots
@@ -2412,6 +2773,157 @@ describe('seneca-provider target, from its package', () => {
 
 
   // `cmdActions` — which SDK op serves each action of one cmd.
+  // What the first provider generated this way got wrong about its own API.
+  describe('a singleton and a create-only entity', () => {
+
+    const SERVER = "main: kit: info: servers: [ { url: 'https://api.demo.example' } ]"
+    const ONLY_THESE = 'main: kit: entity: planet: active: false\n' +
+      SINGLETON_ENTITY + CREATE_ONLY_ENTITY
+
+    const provided = (files, name) => String(files['seneca-provider/' + name])
+
+    let files
+
+    before(async () => {
+      files = (await generateInto(consumer, {
+        model: consumerModel(consumer.sdk, SERVER + '\n' + ONLY_THESE),
+      })).files
+    })
+
+
+    test('a load whose route names no record answers null for an id it does not carry',
+      async () => {
+        const entity = loadProvider(files, 'demo-provider')
+        const record = () => ({ alertAt: null, amount: 5 })
+
+        strictEqual(await drive(entity, 'balance', 'load', { q: { id: 'nosuch' } }, [], record),
+          null)
+        deepStrictEqual(await drive(entity, 'balance', 'load', { q: {} }, [], record),
+          { alertAt: null, amount: 5 })
+        deepStrictEqual(await drive(entity, 'balance', 'load', { q: { id: 'b0' } }, [],
+          () => ({ id: 'b0', amount: 5 })), { id: 'b0', amount: 5 })
+      })
+
+
+    test('the singleton is documented, and quick-loaded, without an id', () => {
+      ok(provided(files, 'doc/reference.md').includes('nothing: the route names no record'),
+        'the reference still requires an id')
+      const quick = provided(files, 'README.md').split('## Quick Example')[1].split('## Install')[0]
+      ok(quick.includes("balance').load$()"), 'the quick example loads by id:\n' + quick)
+    })
+
+
+    test('a number-or-null field is documented and seeded as a number', () => {
+      ok(provided(files, 'doc/reference.md').includes('| `alertAt` | number or null |'),
+        'alertAt is not documented as number or null')
+      ok(/"alertAt":\d/.test(provided(files, 'test/seed.js')), 'alertAt is not seeded as a number')
+    })
+
+
+    test('a create-only entity is never shown an update', () => {
+      const howto = provided(files, 'doc/how-to.md')
+      ok(!howto.includes('## Update a record'), 'the how-to updates a create-only entity')
+      ok(howto.includes('always creates one'), 'the how-to does not say save$ always creates')
+      ok(howto.includes('console.log(voucher)\n'),
+        'the how-to reads an id the model does not declare')
+      ok(provided(files, 'README.md').includes('name:voucher` | Create a record. |'),
+        'the README says save$ creates or updates')
+    })
+
+
+    test('a declared server is the SDK\'s default, and is documented as one', () => {
+      const docs = ['README.md', 'doc/how-to.md', 'doc/reference.md', 'doc/explanation.md']
+        .map((name) => provided(files, name)).join('\n')
+      ok(!docs.includes('declares no server'), 'a declared server is documented as absent')
+      ok(provided(files, 'doc/reference.md').includes('`https://api.demo.example`, the server the'),
+        'the reference does not name the default')
+      const quick = provided(files, 'README.md').split('## Quick Example')[1].split('## Install')[0]
+      ok(!quick.includes('base:'), 'the quick example overrides the default')
+    })
+
+
+    test('with no declared server, the quick example supplies a base', async () => {
+      const bare = (await generateInto(consumer, {
+        model: consumerModel(consumer.sdk, ONLY_THESE),
+      })).files
+      const quick = provided(bare, 'README.md').split('## Quick Example')[1].split('## Install')[0]
+      ok(quick.includes("sdk: { base: 'https://demo.example.com' }"),
+        'the quick example has no base to reach:\n' + quick)
+      ok(provided(bare, 'doc/reference.md').includes('declares no server'),
+        'the absent server is not said')
+    })
+
+
+    // The credential code runs in `prepare`, which loadProvider skips.
+    async function sdkOptions(generated, keymap) {
+      const path = Object.keys(generated).find((p) => p.endsWith('src/demo-provider.ts'))
+      const js = compileProvider(String(generated[path]))
+
+      const made = []
+      class Sdk {
+        constructor(opts) { made.push(opts) }
+      }
+      const req = (p) => p.endsWith('package.json') ? { version: '0.0.0' } :
+        new Proxy({}, { get: () => Sdk })
+
+      const mod = { exports: {} }
+      new Function('exports', 'require', 'module', js)(mod.exports, req, mod)
+
+      let prepare = null
+      const seneca = {
+        export: () => () => { }, message: () => { }, shared: {},
+        prepare: (fn) => { prepare = fn },
+      }
+      ;(mod.exports.default || mod.exports).call(seneca, { sdk: {} })
+      await prepare.call({ ...seneca, post: async () => ({ keymap }), log: { warn: () => { } } })
+
+      return made[0]
+    }
+
+
+    // The identity a model declares for an entity no route addresses, as
+    // brontie's does for its voucher.
+    const TOKEN_ID = "main: kit: entity: voucher: {\n" +
+      "  id: { field: 'voucherToken', name: 'voucherToken' }\n" +
+      "  fields: voucherToken: { n: 'voucherToken', h: 'Voucher Token', r: false, ro: true, t: '`$STRING`' }\n" +
+      '}'
+
+
+    test('a create-only entity is keyed by the id its model declares, read from the response',
+      async () => {
+        const tokened = (await generateInto(consumer, {
+          model: consumerModel(consumer.sdk, ONLY_THESE + '\n' + TOKEN_ID),
+        })).files
+        const entity = loadProvider(tokened, 'demo-provider')
+        const calls = []
+
+        const saved = await drive(entity, 'voucher', 'save',
+          saveMsg({ id: 'mine', product: 'coffee' }), calls,
+          () => ({ voucherToken: 'tok1', product: 'coffee' }))
+
+        deepStrictEqual(calls, [['Voucher', 'create', { product: 'coffee' }]])
+        deepStrictEqual(saved, { voucherToken: 'tok1', product: 'coffee', id: 'tok1' })
+        ok(provided(tokened, 'doc/how-to.md').includes('console.log(voucher.id)'),
+          'the how-to does not read the declared id back')
+      })
+
+
+    test('an empty apikey falls back to the legacy api key', async () => {
+      const api = API.replace("auth: false",
+        "auth: true, security: { type: 'http', in: 'header', name: 'Authorization', prefix: 'Bearer' }")
+      const bearer = (await generateInto(consumer, {
+        model: consumerModel(consumer.sdk, '', api),
+      })).files
+
+      strictEqual((await sdkOptions(bearer,
+        { apikey: { value: '' }, api: { value: 'legacy' } })).apikey, 'legacy')
+      strictEqual((await sdkOptions(bearer,
+        { apikey: { value: 'current' }, api: { value: 'legacy' } })).apikey, 'current')
+    })
+
+  })
+
+
   describe('cmdActions', () => {
 
     const { cmdActions } = loadComponent('Main_seneca-provider.ts', {
@@ -2420,6 +2932,9 @@ describe('seneca-provider target, from its package', () => {
         Readme: () => { }, Docs: () => { },
       },
       './Gitignore_seneca-provider': { Gitignore: () => { } },
+      './Makefile_seneca-provider': { Makefile: () => { } },
+      './Standalone_seneca-provider':
+        loadComponent('Standalone_seneca-provider.ts'),
     })
 
     const ENT = {
@@ -2508,7 +3023,22 @@ describe('seneca-provider target, from its package', () => {
         Readme: () => { }, Docs: () => { },
       },
       './Gitignore_seneca-provider': { Gitignore: () => { } },
+      './Makefile_seneca-provider': { Makefile: () => { } },
+      './Standalone_seneca-provider':
+        loadComponent('Standalone_seneca-provider.ts'),
     })
+
+    // An entity no route addresses has no load-match key, so the identity its
+    // model declares is the only one there is.
+    test('an unaddressed entity takes the id field its model declares', () => {
+      const create = { points: [{ s: [{ lit: 'voucher' }], g: {} }] }
+      const fields = { product: { n: 'product' }, voucherToken: { n: 'voucherToken' } }
+
+      strictEqual(recordKey({ name: 'voucher', fields, op: { create },
+        id: { field: 'voucherToken', name: 'voucherToken' } }), 'voucherToken')
+      strictEqual(recordKey({ name: 'voucher', fields, op: { create } }), 'id')
+    })
+
 
     // Airtable's real shape. opParams() alphabetizes for output stability
     // (base_id, record_id, table_id) — table_id sorts last, so the old
@@ -2596,6 +3126,9 @@ describe('seneca-provider target, from its package', () => {
         Readme: () => { }, Docs: () => { },
       },
       './Gitignore_seneca-provider': { Gitignore: () => { } },
+      './Makefile_seneca-provider': { Makefile: () => { } },
+      './Standalone_seneca-provider':
+        loadComponent('Standalone_seneca-provider.ts'),
     })
 
     const account = (r) => ({
