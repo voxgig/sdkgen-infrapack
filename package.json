@@ -1,6 +1,6 @@
 {
   "name": "@voxgig/sdkgen-infrapack",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "description": "Infrastructure-provider targets for the Voxgig SDK Generator: Seneca provider.",
   "type": "commonjs",
   "license": "MIT",
@@ -19,7 +19,8 @@
   },
   "files": [
     ".sdk",
-    "sdkgen-package.json"
+    "sdkgen-package.json",
+    "README.md"
   ],
   "scripts": {
     "test": "node tools/comment-gate.cjs && node tools/dep-gate.cjs && node --test tools/dep-gate.test.cjs && node --enable-source-maps --test test/*.test.js",
@@ -105,11 +106,11 @@
   ],
   "peerDependencies": {
     "@voxgig/apidef": ">=8.17.0",
-    "@voxgig/sdkgen": ">=4.25.0"
+    "@voxgig/sdkgen": ">=4.30.0"
   },
   "devDependencies": {
     "@voxgig/apidef": ">=8.17.0",
-    "@voxgig/sdkgen": ">=4.25.0",
+    "@voxgig/sdkgen": ">=4.30.0",
     "aontu": ">=0.75.0",
     "memfs": "4.68.1",
     "typescript": "7.0.2",
