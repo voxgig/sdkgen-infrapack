@@ -1720,6 +1720,13 @@ describe('seneca-provider target, from its package', () => {
         "main: kit: repo: host: 'GitHub.com'")
       ok(null != provided(cased.files, '.sdk/admin/setup-npm-trust.sh'),
         'a host name is case-insensitive, but GitHub.com lost the script')
+
+      // Still written off github.com, refusing, so an earlier one cannot linger.
+      const moved = await generate("main: kit: target: 'seneca-provider': sdk: version: '2.3.4'\n" +
+        "main: kit: repo: host: 'gitlab.example.com'")
+      const refusal = provided(moved.files, '.sdk/admin/setup-npm-trust.sh')
+      ok(null != refusal && /^exit 1$/m.test(refusal) && !refusal.includes('--publish'),
+        'off github.com the script must refuse rather than go missing: ' + refusal)
     })
 
 

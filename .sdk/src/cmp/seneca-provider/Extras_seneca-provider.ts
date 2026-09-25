@@ -1408,8 +1408,9 @@ const Workflow = cmp(function Workflow(props: any) {
 
   // The script runs from the provider's own .sdk, which only a standalone
   // builder has, and npm trusts GitHub Actions only on github.com.
-  const trusted = provider.standalone &&
-    'github.com' === String(provider.repoHost).toLowerCase()
+  const repository = 'github.com' === String(provider.repoHost).toLowerCase() ?
+    provider.repoPath : null
+  const trusted = provider.standalone && null != repository
   const trustNote = !trusted ? '' :
     '#\n' +
     '# .sdk/admin/setup-npm-trust.sh registers exactly this, and with --check\n' +
@@ -1420,11 +1421,11 @@ const Workflow = cmp(function Workflow(props: any) {
     `#     --file ${PUBLISH_WORKFLOW} \\\n` +
     '#     --allow-publish\n'
 
-  if (trusted) {
+  if (provider.standalone) {
     Folder({ name: '.sdk' }, () => {
       Folder({ name: 'admin' }, () => {
         File({ name: 'setup-npm-trust.sh', mode: 0o755 }, () => {
-          Content(npmTrustScript(provider.repoPath,
+          Content(npmTrustScript(repository,
             [{ pkg: provider.pkgName, file: PUBLISH_WORKFLOW }]))
         })
       })
