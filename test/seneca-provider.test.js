@@ -434,6 +434,61 @@ main: kit: flow: BasicAlertFlow: {
 `
 
 
+// A SINGLETON: a load whose route names no record, and a field that is a
+// number or null — brontie's balance, in miniature.
+const SINGLETON_ENTITY = `
+main: kit: entity: balance: {
+  alias: field: {}
+  name: "balance"
+  field: {
+    alertAt: { name: "alertAt", kind: "field", type: "\`$NUMBER\`", required: true }
+    amount:  { name: "amount",  kind: "field", type: "\`$NUMBER\`", required: true }
+  }
+  fields: {
+    "alertAt": { h: 'Alert At', n: "alertAt", r: true,
+      t: [ "\`$ONE\`", [ "\`$NUMBER\`", "\`$NULL\`" ] ] }
+    "amount": { h: 'Amount', n: "amount", r: true, t: "\`$NUMBER\`" }
+  }
+  op: {
+    load: { name: "load", points: [ {
+      g: {}, m: "GET", o: "/balance", s: [{ lit: "balance" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+  }
+}
+
+main: kit: flow: BasicBalanceFlow: {
+  entity: "balance", kind: "basic", name: "BasicBalanceFlow"
+  step: [ { o: "load" } ]
+}
+`
+
+
+// CREATE-ONLY, with no id in the model: brontie's voucher.
+const CREATE_ONLY_ENTITY = `
+main: kit: entity: voucher: {
+  alias: field: {}
+  name: "voucher"
+  field: {
+    product: { name: "product", kind: "field", type: "\`$STRING\`", required: true }
+  }
+  fields: {
+    "product": { h: 'Product', n: "product", r: true, t: "\`$STRING\`" }
+  }
+  op: {
+    create: { name: "create", points: [ {
+      g: { body: [ { k: "body", n: "product", r: true, t: "\`$STRING\`" } ] }
+      m: "POST", o: "/voucher", s: [{ lit: "voucher" }]
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+  }
+}
+
+main: kit: flow: BasicVoucherFlow: {
+  entity: "voucher", kind: "basic", name: "BasicVoucherFlow"
+  step: [ { o: "create", i: { ref: "voucher_ref01" } } ]
+}
+`
+
+
 // AN ENTITY THE API KEYS BY `username`, NOT `id` — github's user, in
 // miniature. Its response carries an `id` of its own, unrelated to the key,
 // and an `owner` OBJECT under a name a path parameter could also take.
@@ -2718,6 +2773,130 @@ describe('seneca-provider target, from its package', () => {
 
 
   // `cmdActions` — which SDK op serves each action of one cmd.
+  // What the first provider generated this way got wrong about its own API.
+  describe('a singleton and a create-only entity', () => {
+
+    const SERVER = "main: kit: info: servers: [ { url: 'https://api.demo.example' } ]"
+    const ONLY_THESE = 'main: kit: entity: planet: active: false\n' +
+      SINGLETON_ENTITY + CREATE_ONLY_ENTITY
+
+    const provided = (files, name) => String(files['seneca-provider/' + name])
+
+    let files
+
+    before(async () => {
+      files = (await generateInto(consumer, {
+        model: consumerModel(consumer.sdk, SERVER + '\n' + ONLY_THESE),
+      })).files
+    })
+
+
+    test('a load whose route names no record answers null for an id it does not carry',
+      async () => {
+        const entity = loadProvider(files, 'demo-provider')
+        const record = () => ({ alertAt: null, amount: 5 })
+
+        strictEqual(await drive(entity, 'balance', 'load', { q: { id: 'nosuch' } }, [], record),
+          null)
+        deepStrictEqual(await drive(entity, 'balance', 'load', { q: {} }, [], record),
+          { alertAt: null, amount: 5 })
+        deepStrictEqual(await drive(entity, 'balance', 'load', { q: { id: 'b0' } }, [],
+          () => ({ id: 'b0', amount: 5 })), { id: 'b0', amount: 5 })
+      })
+
+
+    test('the singleton is documented, and quick-loaded, without an id', () => {
+      ok(provided(files, 'doc/reference.md').includes('nothing: the route names no record'),
+        'the reference still requires an id')
+      const quick = provided(files, 'README.md').split('## Quick Example')[1].split('## Install')[0]
+      ok(quick.includes("balance').load$()"), 'the quick example loads by id:\n' + quick)
+    })
+
+
+    test('a number-or-null field is documented and seeded as a number', () => {
+      ok(provided(files, 'doc/reference.md').includes('| `alertAt` | number or null |'),
+        'alertAt is not documented as number or null')
+      ok(/"alertAt":\d/.test(provided(files, 'test/seed.js')), 'alertAt is not seeded as a number')
+    })
+
+
+    test('a create-only entity is never shown an update', () => {
+      const howto = provided(files, 'doc/how-to.md')
+      ok(!howto.includes('## Update a record'), 'the how-to updates a create-only entity')
+      ok(howto.includes('always creates one'), 'the how-to does not say save$ always creates')
+      ok(howto.includes('console.log(voucher)\n'),
+        'the how-to reads an id the model does not declare')
+      ok(provided(files, 'README.md').includes('name:voucher` | Create a record. |'),
+        'the README says save$ creates or updates')
+    })
+
+
+    test('a declared server is the SDK\'s default, and is documented as one', () => {
+      const docs = ['README.md', 'doc/how-to.md', 'doc/reference.md', 'doc/explanation.md']
+        .map((name) => provided(files, name)).join('\n')
+      ok(!docs.includes('declares no server'), 'a declared server is documented as absent')
+      ok(provided(files, 'doc/reference.md').includes('`https://api.demo.example`, the server the'),
+        'the reference does not name the default')
+      const quick = provided(files, 'README.md').split('## Quick Example')[1].split('## Install')[0]
+      ok(!quick.includes('base:'), 'the quick example overrides the default')
+    })
+
+
+    test('with no declared server, the quick example supplies a base', async () => {
+      const bare = (await generateInto(consumer, {
+        model: consumerModel(consumer.sdk, ONLY_THESE),
+      })).files
+      const quick = provided(bare, 'README.md').split('## Quick Example')[1].split('## Install')[0]
+      ok(quick.includes("sdk: { base: 'https://demo.example.com' }"),
+        'the quick example has no base to reach:\n' + quick)
+      ok(provided(bare, 'doc/reference.md').includes('declares no server'),
+        'the absent server is not said')
+    })
+
+
+    // The credential code runs in `prepare`, which loadProvider skips.
+    async function sdkOptions(generated, keymap) {
+      const path = Object.keys(generated).find((p) => p.endsWith('src/demo-provider.ts'))
+      const js = compileProvider(String(generated[path]))
+
+      const made = []
+      class Sdk {
+        constructor(opts) { made.push(opts) }
+      }
+      const req = (p) => p.endsWith('package.json') ? { version: '0.0.0' } :
+        new Proxy({}, { get: () => Sdk })
+
+      const mod = { exports: {} }
+      new Function('exports', 'require', 'module', js)(mod.exports, req, mod)
+
+      let prepare = null
+      const seneca = {
+        export: () => () => { }, message: () => { }, shared: {},
+        prepare: (fn) => { prepare = fn },
+      }
+      ;(mod.exports.default || mod.exports).call(seneca, { sdk: {} })
+      await prepare.call({ ...seneca, post: async () => ({ keymap }), log: { warn: () => { } } })
+
+      return made[0]
+    }
+
+
+    test('an empty apikey falls back to the legacy api key', async () => {
+      const api = API.replace("auth: false",
+        "auth: true, security: { type: 'http', in: 'header', name: 'Authorization', prefix: 'Bearer' }")
+      const bearer = (await generateInto(consumer, {
+        model: consumerModel(consumer.sdk, '', api),
+      })).files
+
+      strictEqual((await sdkOptions(bearer,
+        { apikey: { value: '' }, api: { value: 'legacy' } })).apikey, 'legacy')
+      strictEqual((await sdkOptions(bearer,
+        { apikey: { value: 'current' }, api: { value: 'legacy' } })).apikey, 'current')
+    })
+
+  })
+
+
   describe('cmdActions', () => {
 
     const { cmdActions } = loadComponent('Main_seneca-provider.ts', {

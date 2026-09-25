@@ -282,9 +282,18 @@ function parentKeys(ent: any): string[] {
 }
 
 
+const sentinelKey = (type: any): string =>
+  String(type ?? '').replace(/[`$]/g, '').trim().toUpperCase()
+
+const unionMembers = (type: any): any[] =>
+  Array.isArray(type) && 'ONE' === sentinelKey(type[0]) && Array.isArray(type[1]) ?
+    type[1] : []
+
+
 function fieldKind(type: any): string {
   if (Array.isArray(type)) {
-    return 'string'
+    const member = unionMembers(type).find((m: any) => 'NULL' !== sentinelKey(m))
+    return null == member ? 'string' : fieldKind(member)
   }
 
   const t = String(type || '').toUpperCase()
@@ -295,6 +304,11 @@ function fieldKind(type: any): string {
   if (t.includes('NUMBER') || t.includes('INTEGER')) return 'number'
 
   return 'string'
+}
+
+
+function fieldNullable(type: any): boolean {
+  return unionMembers(type).some((m: any) => 'NULL' === sentinelKey(m))
 }
 
 
@@ -439,6 +453,7 @@ const Main = cmp(function Main(props: any) {
             .map((f: any) => ({
               name: f.n,
               kind: fieldKind(f.t),
+              nullable: fieldNullable(f.t),
               parentEntity: parentEntityOf(f.n, entityNames),
             }))
 
@@ -449,6 +464,7 @@ const Main = cmp(function Main(props: any) {
               req.push({
                 name: key,
                 kind: 'string',
+                nullable: false,
                 parentEntity: parentOf[key],
               })
             }
@@ -537,6 +553,8 @@ const Main = cmp(function Main(props: any) {
     version: packageVersion(model, target.name),
     liveBase,
     liveApp,
+    // The server the API definition declares, which is the SDK's own default.
+    specBase,
     publisher: PUBLISHER,
     publisherUrl: PUBLISHER_URL,
     probePath: (entities.find((e: any) =>
@@ -1229,7 +1247,12 @@ ${actionBranch('load',
             `        const hit = await ornull(() => this.shared.sdk.${e.acc}()[op$](${aq}))
         return null == hit ? null : entize(${out('hit')})
 `)}${guard('load', 'q')}${splitLine('load')}      const res = await ornull(() => this.shared.sdk.${e.acc}().load(${sdkArg('load')}))
-      return null == res ? null : entize(${out('res', loadVals)})
+${0 < addressKeys(e.ent, 'load').length || 0 < eparts.length ? '' :
+            `      // The route names no record, so an id finds only the record carrying it.
+      if (null != res && null != q.id && String(${jsProp('plain(res)', rk)}) !== String(q.id)) {
+        return null
+      }
+`}      return null == res ? null : entize(${out('res', loadVals)})
     }
 
 `)
@@ -1380,9 +1403,10 @@ ${provider.authActive ? `
     // the SDK was constructed with NO credential at all — the request went
     // out unauthenticated and failed much later as a 401 or a 404 on
     // anything private, with nothing at startup to point at the cause.
-    // \`apikey\` wins when both are set, so a config that has migrated is
-    // unaffected.
-    const apikey = res?.keymap?.apikey?.value ?? res?.keymap?.api?.value
+    // \`apikey\` wins when both are set and it is not empty, so a config that
+    // has migrated is unaffected.
+    const apikey = [res?.keymap?.apikey?.value, res?.keymap?.api?.value]
+      .find((value: any) => null != value && '' !== value)
 
     // Hand the credential to the SDK as \`apikey\`, NOT as an authorization
     // HEADER. The SDK's own auth stage owns that header: it reads

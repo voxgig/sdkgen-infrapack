@@ -1723,7 +1723,8 @@ const seneca = Seneca()
       },
     },
   })
-  .use('${provider.pkgName}')
+  .use('${provider.pkgName}'${'' === provider.specBase ?
+      `, { sdk: { base: 'https://${provider.lower}.example.com' } }` : ''})
 
 await seneca.ready()
 
@@ -1739,7 +1740,7 @@ await seneca.ready()
         `'${cparts.map((p: string) => 'some-' + p).join(
           null != subject.idsep && '' !== String(subject.idsep) ?
             String(subject.idsep) : '/')}'` :
-        0 === subject.parents.length ? `'some-id'` :
+        0 === subject.parents.length ? (loadHasKey(subject) ? `'some-id'` : '') :
           `{ ` + subject.parents.map((p: string) => `${jsKey(p)}: 'some-${p}'`).join(', ') +
           `, id: 'some-id' }`
       Content(`const ${subject.name} = await seneca
@@ -1903,7 +1904,10 @@ whose logs cannot be read.
     each(provider.entities, (e: any) => {
       each(e.cmds, (cmd: any) => {
         const c = String(cmd.val$ ?? cmd)
-        Content(`| \`sys:entity,cmd:${c},zone:provider,base:${provider.lower},name:${e.name}\` | ${CMD_DESC[c]}. |
+        const desc = 'save' !== c ? CMD_DESC[c] :
+          !e.ops.includes('update') ? 'Create a record' :
+            !e.ops.includes('create') ? 'Update a record' : CMD_DESC[c]
+        Content(`| \`sys:entity,cmd:${c},zone:provider,base:${provider.lower},name:${e.name}\` | ${desc}. |
 `)
       })
     })
@@ -2688,6 +2692,7 @@ const DocHowto = cmp(function DocHowto(props: any) {
   // an absent value to the same thing, so a missing base is treated as absent
   // rather than printed as a default nobody can use.
   const liveBase = provider.liveBase || ''
+  const specBase = provider.specBase || ''
 
   // The same choice the tests and the manual scripts make: fewest parent keys
   // (nothing to arrange), then most cmds. Recipes prefer it, so one entity
@@ -2709,6 +2714,7 @@ const DocHowto = cmp(function DocHowto(props: any) {
   // the API calls it. `apiKey` is that name, for the SDK-direct examples.
   const idf = (_e: any) => 'id'
   const apiKey = (e: any) => e.rk || 'id'
+  const modelsId = (e: any) => null != e.ent?.id || null != (e.ent?.fields || {})[apiKey(e)]
 
   // A parent key's example value. This MIRRORS seedRecord rather than
   // inventing something more readable: the offline recipe below seeds with
@@ -2778,7 +2784,15 @@ const DocHowto = cmp(function DocHowto(props: any) {
 
   const eList = forCmd('list')
   const eLoad = forCmd('load')
-  const eSave = forCmd('save')
+  const forOp = (op: string) => {
+    const able = ents.filter((e: any) => e.ops.includes(op))
+    return able.find((e: any) => e === subject) ||
+      able.find((e: any) => 0 === e.parents.length) ||
+      able[0] || null
+  }
+
+  const eCreate = forOp('create')
+  const eUpdate = forOp('update')
   const eRemove = forCmd('remove')
 
   // Sections as data, so the contents list and the sections cannot disagree.
@@ -2852,53 +2866,63 @@ genuinely wrong.`)
   }
 
 
-  if (null != eSave) {
-    const created = literal(createData(eSave))
+  if (null != eCreate) {
+    const created = literal(createData(eCreate))
+    const updates = eCreate.ops.includes('update')
 
-    sec('Create a record', `\`make$\` builds an entity and \`save$\` writes it. An entity with no id
-is a create:
+    sec('Create a record', `\`make$\` builds an entity and \`save$\` writes it. ${updates ?
+      'An entity with no id\nis a create:' :
+      `The API has no update\nfor a \`${eCreate.name}\`, so \`save$\` always creates one, even from an entity\nthat carries an id:`}
 
 \`\`\`js
-const ${eSave.name} = await seneca
-  .entity('${canon(eSave)}')
+const ${eCreate.name} = await seneca
+  .entity('${canon(eCreate)}')
   .make$(${created})
   .save$()
 
-console.log(${eSave.name}.${idf(eSave)})
+console.log(${eCreate.name}${modelsId(eCreate) ? '.' + idf(eCreate) : ''})
 \`\`\`
-${0 === eSave.parents.length ? '' : `
-Note that \`${eSave.parents.join('`, `')}\` travels in the DATA for a write,
-not in a query: a \`${eSave.name}\` is created inside its parent.
+${0 === eCreate.parents.length ? '' : `
+Note that \`${eCreate.parents.join('`, `')}\` travels in the DATA for a write,
+not in a query: a \`${eCreate.name}\` is created inside its parent.
 `}
-\`save$\` resolves to the record as the API returned it, which is the only
+${modelsId(eCreate) ?
+      `\`save$\` resolves to the record as the API returned it, which is the only
 reliable source of the id. Read it from there rather than predicting it:
 what an API does with an id you supply on create is its own business, and
-several ignore it entirely.`)
+several ignore it entirely.` :
+      `\`save$\` resolves to the record as the API returned it. The API definition
+declares no id for a \`${eCreate.name}\`, so the record is the only place to
+read what identifies one.`}`)
+  }
 
-    const f = changeable(eSave)
 
-    sec('Update a record', `The same call updates. \`save$\` dispatches on the id: an entity carrying
-one is an update, an entity without one is a create. So the safe shape is
+  if (null != eUpdate) {
+    const f = changeable(eUpdate)
+
+    sec('Update a record', `${eUpdate.ops.includes('create') ?
+      'The same call updates. `save$` dispatches on the id: an entity carrying\none is an update, an entity without one is a create.' :
+      `\`save$\` updates: the API has no create for a \`${eUpdate.name}\`.`} So the safe shape is
 load, change, save:
 
-\`\`\`js${eSave.cmds.includes('load') ? `
-const ${eSave.name} = await seneca
-  .entity('${canon(eSave)}')
-  .load$(${oneArgs(eSave)})
+\`\`\`js${eUpdate.cmds.includes('load') ? `
+const ${eUpdate.name} = await seneca
+  .entity('${canon(eUpdate)}')
+  .load$(${oneArgs(eUpdate)})
 ` : `
-const ${eSave.name} = seneca
-  .entity('${canon(eSave)}')
-  .make$(${literal(0 === eSave.parents.length ?
-      { [idf(eSave)]: `${eSave.name}0` } :
-      { ...Object.fromEntries(eSave.parents.map(
-        (k: string) => [k, parentVal(eSave, k)])),
-      [idf(eSave)]: `${eSave.name}0` })})
+const ${eUpdate.name} = seneca
+  .entity('${canon(eUpdate)}')
+  .make$(${literal(0 === eUpdate.parents.length ?
+      { [idf(eUpdate)]: `${eUpdate.name}0` } :
+      { ...Object.fromEntries(eUpdate.parents.map(
+        (k: string) => [k, parentVal(eUpdate, k)])),
+      [idf(eUpdate)]: `${eUpdate.name}0` })})
 `}${null == f ? `
 // change the fields you need
 ` : `
-${eSave.name}.${f.name} = ${newValue(f)}
+${eUpdate.name}.${f.name} = ${newValue(f)}
 `}
-await ${eSave.name}.save$()
+await ${eUpdate.name}.save$()
 \`\`\`
 
 Mutating the record you loaded sends it as it stood plus your change, so
@@ -3038,13 +3062,16 @@ constructor, so \`base\` chooses the host:
 })
 \`\`\`
 
-${'' === liveBase ?
+${'' === specBase ?
     `The API definition declares no server, so there is no default worth
 relying on: set \`base\` explicitly, or run against the mock instead (see
 [${OFFLINE_TITLE}](${anchor(OFFLINE_TITLE)})).` :
-    `The SDK's own default is \`${liveBase}\`, which is where the
+    specBase === liveBase ?
+      `The SDK's own default is \`${liveBase}\`, which is where the
 companion test server listens, so local development usually needs no
-\`base\` at all.`}`)
+\`base\` at all.` :
+      `The SDK's own default is \`${specBase}\`, the server the API definition
+declares, so \`base\` is needed only to reach another one.`}`)
 
 
   if (!provider.authActive) {
@@ -3332,10 +3359,15 @@ $ npm run repo-publish
 Only \`dist\`, the TypeScript sources and the licence file are published;
 the test suite and its build output stay in the repository.
 
-Before publishing, check that \`package.json\` still depends on the
+${'npm' === provider.sdkDepKind ?
+    `Before publishing, check that \`package.json\` still depends on the
 published SDK by version range and not on a local path: a \`file:\`
 dependency left behind from local development installs perfectly on your
-own machine and cannot be resolved by anybody else.
+own machine and cannot be resolved by anybody else.` :
+    `Publish the SDK to npm first. \`package.json\` depends on it as
+\`${provider.sdkDep}\`, which everyone installing this package would
+have to fetch${'git' === provider.sdkDepKind ? ' with git' : ''}. Then drop \`sdk.dep\` from the model, regenerate,
+and check that the dependency is a version range.`}
 
 One last thing: this repository is GENERATED from the ${provider.api} API
 model by [@voxgig/sdkgen](https://github.com/voxgig/sdkgen). An edit made
@@ -3514,6 +3546,14 @@ Seneca({ legacy: false })
 \`\`\`
 `)
     }
+    else if ('' !== provider.specBase) {
+      Content(`  .use('${provider.pkgName}')
+\`\`\`
+
+The SDK's default base URL is \`${provider.specBase}\`, the server the
+${provider.api} definition declares. Pass \`sdk: { base }\` to reach another.
+`)
+    }
     else {
       Content(`  .use('${provider.pkgName}', { sdk: { base: BASE } })
 \`\`\`
@@ -3542,8 +3582,8 @@ Any option the \`${provider.sdkClass}\` constructor accepts:
 
 | Key | Effect |
 | --- | ------ |
-| \`base\` | Base URL for API requests. ${live ?
-      `The SDK's own default is \`${provider.liveBase}\`.` :
+| \`base\` | Base URL for API requests. ${'' !== provider.specBase ?
+      `The SDK's own default is \`${provider.specBase}\`, the server the API definition declares.` :
       'There is no default: this API declares no server, so it must be set.'} |
 | \`prefix\` / \`suffix\` | URL fragments placed around the path. |
 | \`headers\` | Headers sent on every request. These win over the \`authorization\` header the provider adds from a configured key. |
@@ -3629,7 +3669,9 @@ before any request is made, rather than issuing one that would 404.
 `)
       }
       if (e.cmds.includes('load')) {
-        Content(`| \`load$(q)\` | ${reqd([...e.parents, 'id'])} | One \`${e.name}\`, or \`null\` if not found. |
+        Content(loadHasKey(e) ?
+          `| \`load$(q)\` | ${reqd([...e.parents, 'id'])} | One \`${e.name}\`, or \`null\` if not found. |
+` : `| \`load$(q)\` | ${0 < e.parents.length ? reqd(e.parents) : 'nothing: the route names no record'} | The one \`${e.name}\`, or \`null\` when \`id\` names one it does not carry. |
 `)
       }
       if (e.cmds.includes('save')) {
@@ -3672,7 +3714,7 @@ also defines are passed through unchanged in both directions.
 | ----- | ---- | ----- |
 `)
         each(e.fields, (f: any) => {
-          Content(`| \`${f.name}\` | ${f.kind} | ${f.name === (e.rk || 'id') ?
+          Content(`| \`${f.name}\` | ${f.kind}${f.nullable ? ' or null' : ''} | ${f.name === (e.rk || 'id') ?
             ('id' === f.name ? 'Id field.' : 'API key; carried as the entity\'s `id`.') :
             e.parents.includes(f.name) ? ('' === f.parentEntity ?
               'Parent key. Required by every command.' :
@@ -4451,11 +4493,16 @@ rather than as a surprise in production.
 `)
 
     if ('' === provider.liveBase) {
-      Content(`The API definition declares no server, so this plugin has no default host: the
+      Content(`${'' === provider.specBase ?
+        `The API definition declares no server, so this plugin has no default host: the
 base URL arrives through the \`sdk.base\` option, supplied by whoever configures
 the plugin for a particular deployment. The tests therefore run entirely
 against the SDK's mock transport, which is the one host that is always
-available.
+available.` :
+        `The SDK's default host is \`${provider.specBase}\`, the server the API
+definition declares, and the \`sdk.base\` option points the plugin at another.
+Nothing declares a test server, so the tests run entirely against the SDK's
+mock transport, which is the one host that is always available.`}
 
 
 `)
