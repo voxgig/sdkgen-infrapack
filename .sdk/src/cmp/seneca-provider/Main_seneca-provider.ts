@@ -1,7 +1,7 @@
 import {
   cmp, each,
   File, Content, Copy, Folder,
-  entityCollection, entityOps, entityIdField, entityClassName,
+  entityCollection, entityOps, entityIdField, entityDataIdField, entityClassName,
   entityActions,
   opRequestShape, opParams, ownPoint, entityPath,
   collectDeps, repoInfo, packageName, packageVersion, apiName, envName,
@@ -212,7 +212,7 @@ function recordKey(ent: any): string {
     }
   }
 
-  return '' !== fallback ? fallback : 'id'
+  return '' !== fallback ? fallback : (entityDataIdField(ent) || 'id')
 }
 
 
@@ -1302,7 +1302,12 @@ ${dropPark}
       // which matches a request against a stored record, then looked for a
       // record whose own \`id\` was that joined string and found none.
       delete data.id
-` : !keyed ? '' : `
+` : !keyed ? '' : hasCreate && !hasUpdate && true !== e.rkoncreate ? `
+      // The API assigns a ${e.name}'s \`${rk}\`, and a create names no record, so
+      // Seneca's \`id\` is not sent: the id is read back from the response.
+      const key: any = null
+${dropPark}      delete data.id
+` : `
       // This API keys a ${e.name} by \`${rk}\`; Seneca carries it as \`id\`.
       // The key goes on the body under the API's own name, where the route
       // reads it, and into the match, which the SDK consults first.

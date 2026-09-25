@@ -2881,6 +2881,33 @@ describe('seneca-provider target, from its package', () => {
     }
 
 
+    // The identity a model declares for an entity no route addresses, as
+    // brontie's does for its voucher.
+    const TOKEN_ID = "main: kit: entity: voucher: {\n" +
+      "  id: { field: 'voucherToken', name: 'voucherToken' }\n" +
+      "  fields: voucherToken: { n: 'voucherToken', h: 'Voucher Token', r: false, ro: true, t: '`$STRING`' }\n" +
+      '}'
+
+
+    test('a create-only entity is keyed by the id its model declares, read from the response',
+      async () => {
+        const tokened = (await generateInto(consumer, {
+          model: consumerModel(consumer.sdk, ONLY_THESE + '\n' + TOKEN_ID),
+        })).files
+        const entity = loadProvider(tokened, 'demo-provider')
+        const calls = []
+
+        const saved = await drive(entity, 'voucher', 'save',
+          saveMsg({ id: 'mine', product: 'coffee' }), calls,
+          () => ({ voucherToken: 'tok1', product: 'coffee' }))
+
+        deepStrictEqual(calls, [['Voucher', 'create', { product: 'coffee' }]])
+        deepStrictEqual(saved, { voucherToken: 'tok1', product: 'coffee', id: 'tok1' })
+        ok(provided(tokened, 'doc/how-to.md').includes('console.log(voucher.id)'),
+          'the how-to does not read the declared id back')
+      })
+
+
     test('an empty apikey falls back to the legacy api key', async () => {
       const api = API.replace("auth: false",
         "auth: true, security: { type: 'http', in: 'header', name: 'Authorization', prefix: 'Bearer' }")
@@ -3000,6 +3027,18 @@ describe('seneca-provider target, from its package', () => {
       './Standalone_seneca-provider':
         loadComponent('Standalone_seneca-provider.ts'),
     })
+
+    // An entity no route addresses has no load-match key, so the identity its
+    // model declares is the only one there is.
+    test('an unaddressed entity takes the id field its model declares', () => {
+      const create = { points: [{ s: [{ lit: 'voucher' }], g: {} }] }
+      const fields = { product: { n: 'product' }, voucherToken: { n: 'voucherToken' } }
+
+      strictEqual(recordKey({ name: 'voucher', fields, op: { create },
+        id: { field: 'voucherToken', name: 'voucherToken' } }), 'voucherToken')
+      strictEqual(recordKey({ name: 'voucher', fields, op: { create } }), 'id')
+    })
+
 
     // Airtable's real shape. opParams() alphabetizes for output stability
     // (base_id, record_id, table_id) — table_id sorts last, so the old

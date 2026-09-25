@@ -3689,7 +3689,8 @@ before any request is made, rather than issuing one that would 404.
 
       if ('id' !== apiKeyOf(e)) {
         Content(`
-The API addresses \`${e.name}\` records by \`${apiKeyOf(e)}\`; the provider
+The API ${e.ops.some((op: string) => ['load', 'remove', 'update'].includes(op)) ?
+          'addresses' : 'identifies'} \`${e.name}\` records by \`${apiKeyOf(e)}\`; the provider
 carries that value as the entity's \`id\`, so every query and entity above
 uses \`id\`. A record the API returns with an unrelated \`id\` of its own
 ${false === e.parkfree ?
