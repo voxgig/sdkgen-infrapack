@@ -2384,6 +2384,49 @@ describe('seneca-provider target, from its package', () => {
     })
 
 
+    // The provider rethrows SDK errors and Seneca serialises them into its
+    // log, so what the thrown error prints is what the log carries. Skipped
+    // while the generator installed here predates secret redaction.
+    test('an SDK error thrown through the provider carries no credential', async (t) => {
+      const CANARY = 'CANARY-APIKEY-k9x2m7q4p1'
+      const client = new sdk.module.DemoSDK({
+        apikey: CANARY,
+        utility: {
+          fetcher: async () => ({
+            status: 500, statusText: 'ERR',
+            headers: { get() { return undefined }, forEach() { } },
+            json: async () => ({ error: 'boom' }),
+          }),
+        },
+      })
+      if ('function' !== typeof client._utility.cleanAdd) {
+        return t.skip('the installed @voxgig/sdkgen predates secret redaction')
+      }
+
+      const self = { shared: { sdk: client } }
+      let err = null
+      try {
+        await entity.account.cmd.load.action.call(self, (d) => d, { q: { id: 'voxgig' }, ent: {} })
+      }
+      catch (e) {
+        err = e
+      }
+      ok(null != err, 'the 500 should have thrown through the provider')
+
+      const forms = [CANARY, Buffer.from(CANARY).toString('base64'), encodeURIComponent(CANARY)]
+      const surfaces = [String(err), err.message, err.stack, JSON.stringify(err),
+        require('node:util').inspect(err, { depth: 8 })]
+      for (const text of surfaces) {
+        for (const f of forms) {
+          ok(!String(text).includes(f), 'the credential leaked into the thrown error: ' +
+            String(text).slice(0, 300))
+        }
+      }
+      ok(null != err.spec && null != err.spec.headers, 'the error carries its cleaned spec')
+      strictEqual(err.status, 500)
+    })
+
+
     // github's user answers `GET /users/{username}` with `login` and a
     // numeric `id`, and no `username` at all. The key the request used is
     // the only source of the entity's id.
