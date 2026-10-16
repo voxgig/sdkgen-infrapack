@@ -2385,9 +2385,8 @@ describe('seneca-provider target, from its package', () => {
 
 
     // The provider rethrows SDK errors and Seneca serialises them into its
-    // log, so what the thrown error prints is what the log carries. Skipped
-    // while the generator installed here predates secret redaction.
-    test('an SDK error thrown through the provider carries no credential', async (t) => {
+    // log, so what the thrown error prints is what the log carries.
+    test('an SDK error thrown through the provider carries no credential', async () => {
       const CANARY = 'CANARY-APIKEY-k9x2m7q4p1'
       const client = new sdk.module.DemoSDK({
         apikey: CANARY,
@@ -2399,10 +2398,6 @@ describe('seneca-provider target, from its package', () => {
           }),
         },
       })
-      if ('function' !== typeof client._utility.cleanAdd) {
-        return t.skip('the installed @voxgig/sdkgen predates secret redaction')
-      }
-
       const self = { shared: { sdk: client } }
       let err = null
       try {

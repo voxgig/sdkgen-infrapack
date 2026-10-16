@@ -85,6 +85,10 @@
     "floor is a deliberate act and lowering it is a claim about what has been",
     "run; the lane is what settles either.",
     "",
+    "The floor is the first release that redacts credentials from everything",
+    "a generated SDK emits, which the provider suite asserts on an SDK error",
+    "thrown through the provider rather than skipping where it is absent.",
+    "",
     "This is a SEPARATE REPOSITORY, so there is no `file:` path back to the",
     "generator: the dependency is the published package, and that is the",
     "point. It makes this package's CI the thing that catches an sdkgen",
@@ -105,12 +109,12 @@
     "will flag it; it is load-bearing."
   ],
   "peerDependencies": {
-    "@voxgig/apidef": ">=8.17.0",
-    "@voxgig/sdkgen": ">=4.30.0"
+    "@voxgig/apidef": ">=8.18.0",
+    "@voxgig/sdkgen": ">=4.33.0"
   },
   "devDependencies": {
-    "@voxgig/apidef": ">=8.17.0",
-    "@voxgig/sdkgen": ">=4.30.0",
+    "@voxgig/apidef": ">=8.18.0",
+    "@voxgig/sdkgen": ">=4.33.0",
     "aontu": ">=0.75.0",
     "memfs": "4.68.1",
     "typescript": "7.0.2",
