@@ -1,0 +1,35 @@
+
+# Postman collections for the API, organised by entity rather than by path,
+# and the model's entity flows as a runnable collection. Wraps no language
+# target: every request is derived from the model.
+
+main: kit: target: postman: {
+
+  title: 'Postman collections'
+  ext: yaml
+  comment: line: "#"
+  module: name: '$$name$$'
+  base: 'BASE'
+  srcfeature: false
+
+  phase: {
+    entity:     { active: false }
+    feature:    { active: false }
+    readme:     { active: false }
+    agentguide: { active: false }
+    test:       { active: false }
+  }
+
+  deps: {}
+}
+
+
+main: kit: feature: &: target: postman: deps: &: {
+  kind: *'prod' | string
+}
+
+
+# Nothing to publish to a registry: a release is a git tag cut at the root.
+main: kit: target: postman: publish: {
+  tag: { via: 'root' }
+}

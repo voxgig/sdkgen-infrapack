@@ -1,0 +1,386 @@
+openapi: 3.1.0
+info:
+  title: Taxonomy API
+  version: "1.0.0"
+  description: >
+    CRUD-style API for biological taxonomy:
+    Domain → Kingdom → Phylum → Class → Order → Family → Genus → Species.
+servers:
+  - url: https://api.example.com
+tags:
+  - name: Domain
+  - name: Kingdom
+  - name: Phylum
+  - name: Class
+  - name: Order
+  - name: Family
+  - name: Genus
+  - name: Species
+  - name: Observation
+
+paths:
+  ## Domain
+  "/{year}/domain":
+    get:
+      tags: [Domain]
+      summary: List domains
+      operationId: listDomains
+      parameters:
+        - $ref: "#/components/parameters/Year"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200": { $ref: "#/components/responses/PaginatedTaxaResponse" }
+        default: { $ref: "#/components/responses/Error" }
+
+  "/{year}/domain/{id}":
+    get:
+      tags: [Domain]
+      summary: Get a domain
+      operationId: getDomain
+      parameters:
+        - $ref: "#/components/parameters/Year"
+        - name: id
+          in: path
+          required: true
+          description: Identifier of the domain
+          schema: { $ref: "#/components/schemas/Id" }
+      responses:
+        "200": { $ref: "#/components/responses/OkTaxon" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [Domain]
+      summary: Update a domain
+      operationId: updateDomain
+      parameters:
+        - $ref: "#/components/parameters/Year"
+        - name: id
+          in: path
+          required: true
+          description: Identifier of the domain
+          schema: { $ref: "#/components/schemas/Id" }
+      requestBody: { $ref: "#/components/requestBodies/TaxonUpdate" }
+      responses:
+        "200": { $ref: "#/components/responses/OkTaxon" }
+        default: { $ref: "#/components/responses/Error" }
+
+  "/{year}/domain/{did}/revoke":
+    post:
+      tags: [Domain]
+      summary: Revoke a domain
+      operationId: revokeDomain
+      parameters:
+        - $ref: "#/components/parameters/Year"
+        - name: id
+          in: path
+          required: true
+          description: Identifier of the domain
+          schema: { $ref: "#/components/schemas/Id" }
+      requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              name:
+                type: string
+
+      responses:
+        "200":
+          content:
+            "application/json":
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        default: { $ref: "#/components/responses/Error" }
+        
+  ## Kingdom
+  "/{year}/domain/{id}/kingdom":
+    get:
+      tags: [Kingdom]
+      summary: List kingdoms within a domain
+      operationId: listKingdoms
+      parameters:
+        - $ref: "#/components/parameters/Year"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: id
+          in: path
+          required: true
+          description: Identifier of the domain
+          schema: { $ref: "#/components/schemas/Id" }          
+      responses:
+        "200": { $ref: "#/components/responses/PaginatedTaxaResponse" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [Kingdom]
+      summary: Create a kingdom within a domain
+      operationId: createKingdom
+      parameters:
+        - $ref: "#/components/parameters/Year"
+        - $ref: "#/components/parameters/DomainId"
+      requestBody: { $ref: "#/components/requestBodies/TaxonCreate" }
+      responses:
+        "201": { $ref: "#/components/responses/CreatedTaxon" }
+        default: { $ref: "#/components/responses/Error" }
+
+  "/{year}/domain/{domain_id}/kingdom/{kingdom_id}":
+    get:
+      tags: [Kingdom]
+      summary: Get a kingdom
+      operationId: getKingdom
+      parameters:
+        - $ref: "#/components/parameters/Year"
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/KingdomId"
+      responses:
+        "200": { $ref: "#/components/responses/OkTaxon" }
+        default: { $ref: "#/components/responses/Error" }
+
+  "/{year}/domain/{domain}/kingdom/{kid}/phylum/{itemid}":
+    get:
+      tags: [Phylum]
+      summary: Get a phylum
+      operationId: getPhylum
+      parameters:
+        - $ref: "#/components/parameters/Year"
+        - name: domain
+          in: path
+          required: true
+        - name: kid
+          in: path
+          required: true
+        - name: itemid
+          in: path
+          required: true
+      responses:
+        "200": { $ref: "#/components/responses/OkTaxon" }
+        default: { $ref: "#/components/responses/Error" }
+
+  ## Observation — list-only entity that exercises wrapper-response unwrap.
+  ## The list response is a paginated wrapper { items: [Observation], page, ... };
+  ## without unwrap-aware field resolution there are no other ops to fall back on
+  ## and the entity ends up with no fields at all.
+  "/{year}/observation":
+    get:
+      tags: [Observation]
+      summary: List observations
+      operationId: listObservations
+      parameters:
+        - $ref: "#/components/parameters/Year"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200": { $ref: "#/components/responses/PaginatedObservationsResponse" }
+        default: { $ref: "#/components/responses/Error" }
+
+
+components:
+  parameters:
+    Year:
+      name: year
+      in: path
+      required: true
+      description: Calendar year for the dataset view.
+      schema:
+        type: integer
+        minimum: 0
+    Page:
+      name: page
+      in: query
+      required: false
+      description: 1-based page index
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      description: Items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 20
+
+    DomainId:
+      name: domain_id
+      in: path
+      required: true
+      description: Identifier of the domain
+      schema: { $ref: "#/components/schemas/Id" }
+
+  requestBodies:
+    TaxonCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/TaxonCreate"
+    TaxonUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/TaxonUpdate"
+
+  responses:
+    PaginatedTaxaResponse:
+      description: A paginated list of taxa
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PaginatedTaxa"
+    PaginatedObservationsResponse:
+      description: A paginated list of observations
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PaginatedObservations"
+    OkTaxon:
+      description: The requested taxon
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Taxon"
+    CreatedTaxon:
+      description: The created taxon
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Taxon"
+    NoContent:
+      description: Resource deleted successfully
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Id:
+      type: string
+      pattern: "^[A-Za-z0-9_.-]+$"
+      description: URL-safe identifier
+      examples: ["eukarya", "animalia", "chordata"]
+
+    Taxon:
+      type: object
+      required: [id, name, rank]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        name:
+          type: string
+          examples: ["Animalia", "Chordata", "Mammalia"]
+        rank:
+          type: string
+          enum: [domain, kingdom, phylum, class, order, family, genus, species]
+        parentId:
+          allOf: [{ $ref: "#/components/schemas/Id" }]
+          nullable: true
+          description: ID of the parent taxon in the hierarchy
+        year:
+          type: integer
+          description: Year view this record belongs to
+        attributes:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    TaxonCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        attributes:
+          type: object
+          additionalProperties: true
+      description: >
+        Rank and parent are implied by the endpoint. ID is server-assigned unless
+        your implementation permits client-specified IDs.
+
+    TaxonUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        attributes:
+          type: object
+          additionalProperties: true
+
+    PaginatedTaxa:
+      type: object
+      required: [items, page, pageSize, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Taxon"
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+
+    Observation:
+      type: object
+      required: [id, taxonId, observedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        taxonId:
+          $ref: "#/components/schemas/Id"
+        observedAt:
+          type: string
+          format: date-time
+        location:
+          type: object
+          additionalProperties: true
+        notes:
+          type: string
+        confidence:
+          type: number
+
+    PaginatedObservations:
+      type: object
+      required: [items, page, pageSize, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Observation"
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+
+    Error:
+      type: object
+      required: [message]
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          additionalProperties: true
+

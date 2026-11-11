@@ -1,12 +1,15 @@
 # @voxgig/sdkgen-infrapack
 
-**Infrastructure-provider targets** for the
-[Voxgig SDK Generator](https://github.com/voxgig/sdkgen).
+**Infrastructure targets** for the
+[Voxgig SDK Generator](https://github.com/voxgig/sdkgen): your API's entities
+in someone else's system, generated from the model your SDKs are generated
+from.
 
 An infrastructure provider is not an SDK. It is a plugin for someone else's
 system — Seneca, Terraform — that exposes your API's entities in that system's
-own vocabulary, layered on the SDK generated from the same model. Every target
-here wraps a language target rather than being one.
+own vocabulary, layered on the SDK generated from the same model. A Postman
+collection is the same idea for an API client. No target here is an SDK:
+`seneca-provider` wraps one, and `postman` is derived from the model alone.
 
 ```bash
 npm install --save-dev @voxgig/sdkgen-infrapack
@@ -19,17 +22,18 @@ npm run generate
 | target | wraps | produces |
 |---|---|---|
 | `seneca-provider` | `ts` | a [Seneca](https://senecajs.org) plugin exposing entities as `provider/<name>/<entity>` |
+| `postman` | nothing | [Postman](https://www.postman.com) collections: one folder per entity, and the model's flows as a runnable collection |
 
 `terraform-provider` is designed and not yet built; see the design notes in the
 sdkgen repository.
 
-## Every target here needs the target it wraps
+## `seneca-provider` needs the target it wraps
 
 These are consumer targets: they switch every standard generation phase off and
-emit their whole package from `Main`, and each one fails without the target it
-wraps, deliberately. Add `ts` to your project before `seneca-provider`. The
-one exception is a provider that carries its own builder (below), which names
-the SDK it wraps instead.
+emit their whole package from `Main`. `seneca-provider` fails without the `ts`
+target it wraps, deliberately: add `ts` to your project before it. The one
+exception is a provider that carries its own builder (below), which names the
+SDK it wraps instead. `postman` wraps nothing and needs no other target.
 
 There is no manifest field for that requirement. Nothing in
 `sdkgen-package.json` says "this target needs that one", so this paragraph and
@@ -155,6 +159,61 @@ install. The generated CI passes `--allow-git=all`, which npm 12 needs for a
 git dependency, and so would anyone installing a published provider that
 depends on one: publish the SDK to npm before the provider.
 
+## `postman`: the API as Postman collections, by entity
+
+Postman's own converter turns an OpenAPI definition into folders that mirror
+its URL paths. This target organises the API the way the SDKs do: a folder per
+entity, a request per operation and per custom action, each named as the SDK
+names it. It writes Postman v12's native collection format (v3, YAML), in the
+layout a Postman local workspace reads, into `postman/`:
+
+```
+postman/
+  collections/<API title>/                one folder per entity
+  collections/<API title> flows/          one folder per flow of the model
+  environments/<name>.environment.yaml    the server, credentials and inputs
+  README.md                               how to run them, and what is left out
+```
+
+**A record is addressed through its entity's variable.** Every request that
+addresses a planet binds the definition's own placeholder (`:planet_id`) to
+`{{planet_id}}`, whatever the route calls it, and a moon's routes bind their
+planet the same way. A create remembers the record it makes, a list the first
+record it finds while none is held, and a remove forgets the record it removed.
+
+**The flows collection runs.** Each flow of the model is a folder of its
+steps, and the model's own checks are its tests: a created record is listed, an
+update reads back, a removed record is gone. A step whose inputs nothing gave is
+skipped rather than sent with a variable unset, and fails the run unless
+`strict` is `false`; `getonly=true` sends GET requests alone, as
+`VOXGIG_GETONLY_GUARD` does for the SDK suites. With the
+[Postman CLI](https://learning.postman.com/docs/postman-cli/postman-cli-overview/):
+
+```bash
+postman collection run "postman/collections/Solar System API flows" \
+  --environment postman/environments/solar.environment.yaml \
+  --env-var planet_id=earth
+```
+
+**Credentials stay out of the files.** The environment carries empty slots for
+`apikey`, and `secret` for HTTP Basic. Where the API exchanges a stored
+credential for a token, the collections make the exchange once a run, and take
+`access_token` as given when it is set.
+
+**Requests come from the model**, so they send what the SDK sends: the same
+routes, parameters under the definition's names, and the credential where the
+SDK puts it. Where the build publishes the resolved API definition, as a
+project's own build does, request bodies are sampled from the definition's
+schemas, enums and examples included; otherwise they are placeholders by field
+type. What a collection cannot hold — a GraphQL route, a body that is not
+JSON, a response it cannot read a record from — is left out, logged at
+generation, and listed in `postman/README.md`.
+
+Generated in tree, the target makes the SDK repository a Postman local
+workspace: open it in Postman, or run the Postman CLI from its root. To
+generate into another workspace instead, point `output: path` at that
+workspace's `postman/` folder.
+
 ## Parity
 
 Every target here declares `CONSUMER`. That is not a coverage tier alongside
@@ -179,6 +238,30 @@ the pre-push hook and CI all run the gate, so it cannot be forgotten.
 The suite runs on `@voxgig/sdkgen/testkit`: it installs this package into a
 staged consumer through the real `package add`, compiles the components the way
 a consumer's build does, and generates.
+
+Every target is also generated from real API definitions: solar, elementdemo
+and taxonomy, the synthetic APIs of
+[voxgig/apidef-validate](https://github.com/voxgig/apidef-validate), vendored in
+`test/def/`. Each is built into a model by apidef, as a project's own build
+does, so a target is tested on what it is actually given. The copies are not
+edited here: change the upstream definition, then refresh them with
+
+```bash
+npm run vendor-defs                  # the newest version of each, from main
+npm run vendor-defs -- --ref <sha>   # or from a branch, tag or commit
+```
+
+which records the commit and every file's sha256 in `test/def/vendor.json`;
+`npm test` fails on a copy that no longer matches. The script needs git and
+fetches only the files it vendors.
+
+The `postman` suite hands its output to the
+[Postman CLI](https://www.npmjs.com/package/postman-cli), a devDependency
+tracking the latest release: its linter, and its runner against a stand-in
+server built from each definition alone (`test/mock.js`), which refuses any
+request the definition does not describe. The CLI installs a native binary of
+some hundreds of megabytes for the platform; where it is missing those tests
+skip and say so.
 
 Two tests **skip** against a published sdkgen whose test kit predates the
 `outside` option, which is what lets a suite express out-of-tree generation at

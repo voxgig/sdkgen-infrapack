@@ -9,10 +9,12 @@
   },
   "provides": {
     "target": [
-      "seneca-provider"
+      "seneca-provider",
+      "postman"
     ]
   },
   "parity": {
-    "seneca-provider": "CONSUMER"
+    "seneca-provider": "CONSUMER",
+    "postman": "CONSUMER"
   }
 }

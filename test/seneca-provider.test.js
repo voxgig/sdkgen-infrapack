@@ -31,6 +31,9 @@ const { Aontu } = require('aontu')
 const { Script } = require('node:vm')
 
 const { stageConsumer, generateInto } = require('@voxgig/sdkgen/testkit')
+const { entityOps } = require('@voxgig/sdkgen')
+
+const { defs, buildApi, apiModel } = require('./support')
 
 
 const PKG = Path.resolve(__dirname, '..')
@@ -916,7 +919,7 @@ main: kit: flow: BasicEmblemFlow: {
 // then this does: a throw on the way — a compile error, a missing entry
 // module — otherwise leaves the checkout behind with nobody holding its path,
 // as compileProvider's own finally already prevented.
-function compileSdk(files) {
+function compileSdk(files, Name = 'Demo') {
   const dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'infrapack-sdk-'))
   let sdk = null
   try {
@@ -933,7 +936,7 @@ function compileSdk(files) {
       '--typeRoots', Path.join(PKG, 'node_modules', '@types'),
       '--noCheck', '--sourceMap', 'false',
     ], { cwd: PKG, stdio: 'inherit' })
-    sdk = { dir, module: require(Path.join(dir, 'dist', 'DemoSDK.js')) }
+    sdk = { dir, module: require(Path.join(dir, 'dist', Name + 'SDK.js')) }
   }
   finally {
     if (null == sdk) {
@@ -3025,6 +3028,140 @@ describe('seneca-provider target, from its package', () => {
         { apikey: { value: 'current' }, api: { value: 'legacy' } })).apikey, 'current')
     })
 
+  })
+
+
+  // EVERY VENDORED DEFINITION, END TO END. The fragments above isolate one
+  // shape each; these are whole APIs as apidef models them, so the provider
+  // is held to what the generator actually receives.
+  describe('from the vendored definitions', () => {
+
+    const built = {}
+
+    // Named `demo`, as the templates `target add` copied into this consumer
+    // already are: the SDK a provider wraps has to be the one it names.
+    before(async () => {
+      for (const def of defs()) {
+        await buildApi(consumer, def)
+        const model = apiModel(consumer, def.api, '', 'demo')
+        const { files, leaks } = await generateInto(consumer, { model })
+        const sdk = compileSdk(files)
+        built[def.api] = {
+          model, files, leaks, sdk, Name: 'Demo',
+          entity: loadProvider(files, 'demo-provider', sdk.module),
+        }
+      }
+    })
+
+    after(() => {
+      for (const b of Object.values(built)) Fs.rmSync(b.sdk.dir, { recursive: true, force: true })
+    })
+
+
+    // What a call must carry besides the record's own key: every required
+    // route parameter of the entity's own operations.
+    function parentsOf(ent) {
+      const out = {}
+      for (const op of Object.values(ent.op || {})) {
+        for (const pt of (op.points || []).filter((p) => null == p.q?.['$action'])) {
+          for (const p of pt.g?.params || []) {
+            if ('id' === p.n || false === p.r || null != out[p.n]) continue
+            out[p.n] = /INTEGER|NUMBER/.test(String(p.t)) ? 2026 : p.n + '-1'
+          }
+        }
+      }
+      return out
+    }
+
+    function recordOf(ent, parents) {
+      const out = {}
+      for (const f of Object.values(ent.fields || {})) {
+        if (false === f.r) continue
+        const t = String(f.t)
+        out[f.n] = /INTEGER|NUMBER/.test(t) ? 1 : /BOOLEAN/.test(t) ? true :
+          /OBJECT/.test(t) ? {} : /ARRAY/.test(t) ? [] : 'x'
+      }
+      return { ...out, ...parents }
+    }
+
+
+    for (const def of defs()) {
+      describe(def.api, () => {
+
+        test('generates a provider with no placeholder left in it', () => {
+          const { files, leaks } = built[def.api]
+          ok(Object.keys(files).some((p) => p.startsWith('seneca-provider/src/')), 'no provider source')
+          deepStrictEqual(leaks.filter((l) => l.startsWith('seneca-provider/')), [])
+        })
+
+
+        test('every entity has the cmds its operations give it', () => {
+          const { model, entity } = built[def.api]
+          const CMD_OPS = { list: ['list'], load: ['load'], save: ['create', 'update'], remove: ['remove'] }
+          const want = {}
+          for (const ent of Object.values(model.main.kit.entity)) {
+            if (false === ent.active) continue
+            const ops = entityOps(ent)
+            const cmds = Object.keys(CMD_OPS).filter((c) => CMD_OPS[c].some((o) => ops.includes(o)))
+            if (0 < cmds.length) want[ent.name] = cmds
+          }
+          const got = {}
+          for (const [name, e] of Object.entries(entity)) got[name] = Object.keys(e.cmd).sort()
+          deepStrictEqual(got, Object.fromEntries(Object.entries(want).map(([k, v]) => [k, v.sort()])))
+        })
+
+
+        test('each entity round-trips through the SDK\'s own mock', async () => {
+          const { model, entity, sdk, Name } = built[def.api]
+          const entize = (d) => d
+
+          for (const [name, e] of Object.entries(entity)) {
+            const ent = model.main.kit.entity[name]
+            const parents = parentsOf(ent)
+            const seed = { ...recordOf(ent, parents), id: 'r1' }
+            const client = sdk.module[Name + 'SDK'].test({ entity: { [name]: { r1: seed } } })
+            const self = { shared: { sdk: client } }
+            const label = def.api + ' ' + name
+            const call = async (cmd, msg) => {
+              try {
+                return await e.cmd[cmd].action.call(self, entize, msg)
+              }
+              catch (err) {
+                throw new Error(label + ' ' + cmd + ' ' + JSON.stringify(msg.q) + ': ' + err.message,
+                  { cause: err })
+              }
+            }
+
+            if (null != e.cmd.list) {
+              const all = await call('list', { q: { ...parents }, ent: {} })
+              ok(all.some((r) => 'r1' === String(r.id)), label + ' list: ' + JSON.stringify(all))
+            }
+            if (null != e.cmd.load) {
+              const one = await call('load', { q: { id: 'r1', ...parents }, ent: {} })
+              strictEqual(String(one?.id), 'r1', label + ' load: ' + JSON.stringify(one))
+            }
+            // A plain create, not a create whose only route is an action.
+            const creates = (ent.op?.create?.points || []).some((p) => null == p.q?.['$action'])
+            if (null != e.cmd.save && creates) {
+              const { id, ...data } = recordOf(ent, parents)
+              const made = await call('save', { q: {}, ent: { data$: () => ({ ...data }) } })
+              ok(null != made?.id, label + ' create: ' + JSON.stringify(made))
+              if (null != e.cmd.load) {
+                const back = await call('load', { q: { id: made.id, ...parents }, ent: {} })
+                strictEqual(String(back?.id), String(made.id), label + ' load after create')
+              }
+            }
+            if (null != e.cmd.remove) {
+              await call('remove', { q: { id: 'r1', ...parents }, ent: {} })
+              if (null != e.cmd.load) {
+                strictEqual(await call('load', { q: { id: 'r1', ...parents }, ent: {} }), null,
+                  label + ' load after remove')
+              }
+            }
+          }
+        })
+      })
+    }
   })
 
 
