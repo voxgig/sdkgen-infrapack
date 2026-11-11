@@ -331,6 +331,86 @@ describe('postman: derivation', () => {
 })
 
 
+describe('postman: request bodies', () => {
+
+  const resolvedOf = (paths) => ({
+    operation: (m, p) => {
+      const op = paths[p]?.[String(m).toLowerCase()]
+      return null == op ? undefined : { protocol: 'http', requestBody: op.requestBody }
+    },
+  })
+
+  const thing = (op, extra = {}) => ({
+    thing: {
+      name: 'thing', id: { field: 'id', name: 'id' },
+      fields: { id: field('id'), kind: field('kind') },
+      op, ...extra,
+    },
+  })
+
+  const flow = {
+    BasicThingFlow: { name: 'BasicThingFlow', entity: 'thing', step: [{ o: 'create', i: { ref: 'thing_ref01' } }] },
+  }
+
+
+  test('a definition\'s own example is copied, so neither a flow nor a binding changes it', () => {
+    const example = { id: 'e1', kind: 'rock' }
+    const resolved = resolvedOf({
+      '/thing': { post: { requestBody: { content: { 'application/json': { schema: { type: 'object', example } } } } } },
+    })
+    const cat = catalogue(model(thing({
+      create: { name: 'create', points: [point('POST', '/thing', ['thing'], { bf: ['id', 'kind'] })] },
+    }), { flow }), resolved)
+
+    deepStrictEqual(requestsOf(cat, 'thing')[0].body, { id: 'thing-{{$timestamp}}', kind: 'rock' })
+    deepStrictEqual(cat.flows[0].steps[0].body, { id: '{{thing_ref01}}', kind: 'rock' })
+    deepStrictEqual(example, { id: 'e1', kind: 'rock' })
+  })
+
+
+  test('an operation the definition gives no body sends none', () => {
+    const resolved = resolvedOf({ '/thing/{id}/revoke': { post: {} } })
+    const cat = catalogue(model(thing({
+      create: { name: 'create', points: [point('POST', '/thing/{id}/revoke', ['thing', '{id}', 'revoke'], {
+        g: { params: [param('id')] }, q: { $action: 'revoke', exist: ['id'] },
+      })] },
+    })), resolved)
+
+    strictEqual(requestsOf(cat, 'thing')[0].body, undefined)
+    const doc = YAML.parse(collectionFiles(cat)['collections/Demo API/Thing/Revoke thing.request.yaml'])
+    strictEqual(doc.body, undefined)
+    strictEqual(doc.headers['Content-Type'], undefined)
+  })
+
+
+  test('a variable standing for a number is sent as a number', () => {
+    const I = '`$INTEGER`'
+    const cat = catalogue(model({
+      parent: {
+        name: 'parent', id: { field: 'id', name: 'id' }, fields: { id: field('id', I) },
+        op: { load: { name: 'load', points: [point('GET', '/parent/{id}', ['parent', '{id}'], { g: { params: [param('id')] } })] } },
+      },
+      child: {
+        name: 'child', id: { field: 'id', name: 'id' },
+        fields: { id: field('id', I), parent_id: field('parent_id', I), name: field('name') },
+        op: { create: { name: 'create', points: [point('POST', '/child', ['child'], { bf: ['id', 'parent_id', 'name'] })] } },
+      },
+    }, { flow: { BasicChildFlow: { name: 'BasicChildFlow', entity: 'child', step: [{ o: 'create', i: { ref: 'child_ref01' } }] } } }))
+
+    const files = collectionFiles(cat)
+    const ref = YAML.parse(files['collections/Demo API/Child/Create child.request.yaml']).body.content
+    ok(ref.includes('"parent_id": {{parent_id}}'), ref)
+    ok(ref.includes('"id": {{$timestamp}}'), ref)
+    ok(ref.includes('"name": "example"'), ref)
+
+    const step = YAML.parse(files['collections/Demo API flows/BasicChildFlow/1. Create child.request.yaml'])
+    ok(step.body.content.includes('"id": {{child_ref01}}'), step.body.content)
+    ok(step.scripts[0].code.includes('pm.variables.set("child_ref01", String(Math.floor(Date.now() / 1000)))'),
+      step.scripts[0].code)
+  })
+})
+
+
 // --- generation from the vendored definitions --------------------------------
 
 const POSTMAN_CLI = Path.join(PKG, 'node_modules', 'postman-cli', 'bin', 'postman.js')

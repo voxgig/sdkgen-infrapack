@@ -185,7 +185,9 @@ function definitionBody(resolved: any, pt: any): any {
   const media = Object.keys(content).find((m) => /json/i.test(m))
   if (null == media) return null
   const sample = schemaSample(content[media]?.schema, 0)
-  return undefined === sample ? null : sample
+  // A copy: requests bind their own variables into it, and the definition
+  // is shared with every other generator.
+  return undefined === sample ? null : JSON.parse(JSON.stringify(sample))
 }
 
 
@@ -279,7 +281,7 @@ type Mode = {
   // The variable an own key part is held in.
   own: (part: Part) => string
   // The value a create sends for a key the client chooses.
-  fresh: (part: Part, inPath: boolean) => string
+  fresh: (part: Part, inPath: boolean, numeric: boolean) => string
 }
 
 
@@ -378,6 +380,10 @@ function requestOf(env: any, ent: any, opname: string, pt: any, title: string, m
 
   let body: any
   let fresh = false
+  // Body keys whose variable stands for a number, written unquoted, and the
+  // client-chosen keys a flow has to mint as numbers.
+  const unquoted: string[] = []
+  const mintNumeric: string[] = []
   if (BODY_METHODS.includes(method)) {
     if (null != pt.rb && 'json' !== pt.rb.kind) {
       env.notes.push({
@@ -388,7 +394,7 @@ function requestOf(env: any, ent: any, opname: string, pt: any, title: string, m
     else {
       const fromDef = definitionBody(env.resolved, pt)
       if (undefined !== fromDef) {
-        body = fromDef
+        body = null === fromDef ? undefined : fromDef
       }
       else {
         // An action's payload is its own, so where the model records none of
@@ -407,14 +413,17 @@ function requestOf(env: any, ent: any, opname: string, pt: any, title: string, m
       if (null != body && 'object' === typeof body && !Array.isArray(body)) {
         for (const name of Object.keys(body)) {
           const b = bind(name)
+          const numeric = 'number' === typeof body[name]
+          let bound = true
           if ('own' === b.role && null != b.part) {
             if (create) {
               if (false === (ent.fields || {})[name]?.r) {
                 delete body[name]
                 continue
               }
-              body[name] = mode.fresh(b.part, params.some((x) => 'own' === x.role))
+              body[name] = mode.fresh(b.part, params.some((x) => 'own' === x.role), numeric)
               fresh = true
+              if (numeric) mintNumeric.push(mode.own(b.part))
             }
             else {
               body[name] = '{{' + b.variable + '}}'
@@ -423,6 +432,10 @@ function requestOf(env: any, ent: any, opname: string, pt: any, title: string, m
           else if ('ref' === b.role && name.endsWith('_id')) {
             body[name] = '{{' + b.variable + '}}'
           }
+          else {
+            bound = false
+          }
+          if (bound && numeric) unquoted.push(name)
         }
       }
     }
@@ -456,7 +469,9 @@ function requestOf(env: any, ent: any, opname: string, pt: any, title: string, m
     query,
     headers,
     body,
+    unquoted,
     fresh,
+    mintNumeric,
     params,
     unwrap,
     uses: usesOf([url, ...pathVars.map((v) => v.value), ...headers.map((h) => h.value),
@@ -511,7 +526,8 @@ function unique(titles: Set<string>, title: string): string {
 function referenceRequests(env: any, ent: any): any[] {
   const mode: Mode = {
     own: (part) => part.variable,
-    fresh: (part, inPath) => inPath ? '{{' + part.variable + '}}' : ent.name + '-{{$timestamp}}',
+    fresh: (part, inPath, numeric) => inPath ? '{{' + part.variable + '}}' :
+      numeric ? '{{$timestamp}}' : ent.name + '-{{$timestamp}}',
   }
   const titles = new Set<string>()
   const out: any[] = []

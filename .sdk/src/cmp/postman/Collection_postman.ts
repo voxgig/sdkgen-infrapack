@@ -87,11 +87,22 @@ function requestDoc(req: any, extra: any): any {
     queryParams: 0 < req.query.length ? req.query.map((q: any) =>
       ({ key: q.key, value: q.value, ...(q.disabled ? { disabled: true } : {}) })) : undefined,
     pathVariables: 0 < req.pathVars.length ? req.pathVars : undefined,
-    body: undefined === req.body ? undefined :
-      { type: 'json', content: JSON.stringify(req.body, null, 2) },
+    body: undefined === req.body ? undefined : { type: 'json', content: bodyText(req) },
     scripts: 0 < (extra.scripts || []).length ? extra.scripts : undefined,
     order: extra.order,
   }
+}
+
+
+// A variable that stands for a number is written unquoted, so the value
+// Postman substitutes reaches the API as a number, not as a string.
+function bodyText(req: any): string {
+  let text = JSON.stringify(req.body, null, 2)
+  for (const name of req.unquoted || []) {
+    const value = req.body[name]
+    text = text.replace(js(name) + ': ' + js(value), js(name) + ': ' + value)
+  }
+  return text
 }
 
 
@@ -238,8 +249,9 @@ function guardScript(cat: any, needs: string[]): string[] {
 
 
 function mintScript(step: any): string[] {
-  return step.minted.map((name: string) =>
-    'pm.variables.set(' + js(name) + ', ' + js(step.entity + '-') + ' + Date.now().toString(36))')
+  return step.minted.map((name: string) => 'pm.variables.set(' + js(name) + ', ' +
+    (step.mintNumeric.includes(name) ? 'String(Math.floor(Date.now() / 1000))' :
+      js(step.entity + '-') + ' + Date.now().toString(36)') + ')')
 }
 
 
