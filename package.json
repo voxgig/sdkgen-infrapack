@@ -88,9 +88,12 @@
     "floor is a deliberate act and lowering it is a claim about what has been",
     "run; the lane is what settles either.",
     "",
-    "The floor is the first release that redacts credentials from everything",
-    "a generated SDK emits, which the provider suite asserts on an SDK error",
-    "thrown through the provider rather than skipping where it is absent.",
+    "The floor is the first release whose CLI starts against the newest",
+    "`shape`: earlier ones call `One`, which `shape` no longer exports, so a",
+    "fresh install of one cannot run `voxgig-sdkgen` at all. It also redacts",
+    "credentials from everything a generated SDK emits, which the provider",
+    "suite asserts on an SDK error thrown through the provider rather than",
+    "skipping where it is absent.",
     "",
     "This is a SEPARATE REPOSITORY, so there is no `file:` path back to the",
     "generator: the dependency is the published package, and that is the",
@@ -124,13 +127,13 @@
     "and the vendored API definitions the stand-in server is built from."
   ],
   "peerDependencies": {
-    "@voxgig/apidef": ">=8.18.0",
-    "@voxgig/sdkgen": ">=4.33.0"
+    "@voxgig/apidef": ">=8.25.0",
+    "@voxgig/sdkgen": ">=4.41.1"
   },
   "devDependencies": {
     "@types/node": ">=24",
-    "@voxgig/apidef": ">=8.18.0",
-    "@voxgig/sdkgen": ">=4.33.0",
+    "@voxgig/apidef": ">=8.25.0",
+    "@voxgig/sdkgen": ">=4.41.1",
     "aontu": ">=0.75.0",
     "memfs": "4.68.1",
     "postman-cli": ">=1.88.0",
