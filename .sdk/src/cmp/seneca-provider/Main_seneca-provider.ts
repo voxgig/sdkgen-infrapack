@@ -18,6 +18,7 @@ import {
 
 import {
   Tests, Scripts, Workflow, Readme, Docs, SdkPin, SDK_SRC_DIR,
+  saveRefuses, saveRefusedOp,
 } from './Extras_seneca-provider'
 import { Gitignore } from './Gitignore_seneca-provider'
 import { Makefile } from './Makefile_seneca-provider'
@@ -69,6 +70,16 @@ function canonicalOps(ent: any): string[] {
 
     return points.some((pt: any) =>
       null == (pt && pt.q && pt.q['$action']))
+  })
+}
+
+
+// The SDK sends an action-only op's action for the plain call.
+function actionOnlyOps(ent: any): string[] {
+  return entityOps(ent).filter((opname: string) => {
+    const points: any[] = ((ent.op || {})[opname] || {}).points || []
+    return 0 < points.length &&
+      points.every((pt: any) => null != (pt && pt.q && pt.q['$action']))
   })
 }
 
@@ -220,7 +231,8 @@ function recordKey(ent: any): string {
 function rkOnCreate(ent: any): boolean {
   const rk = recordKey(ent)
 
-  if ('id' === rk || 0 < idParts(ent).length || null == (ent.op || {}).create) {
+  if ('id' === rk || 0 < idParts(ent).length || null == (ent.op || {}).create ||
+    actionOnlyOps(ent).includes('create')) {
     return false
   }
 
@@ -380,6 +392,7 @@ const Main = cmp(function Main(props: any) {
   const entities = activeEntities
     .map((ent: any) => {
       const parents = parentKeys(ent)
+      const actiononly = actionOnlyOps(ent)
 
       const parentOf: Record<string, string> = {}
       for (const key of parents) {
@@ -397,7 +410,9 @@ const Main = cmp(function Main(props: any) {
         acc: ent.Name,
         path: entityPath(ent),
         cls: entityClassName(ent, entityColl),
-        ops: entityOps(ent),
+        // An action-only op is absent here; its actions stay reachable.
+        ops: entityOps(ent).filter((op: string) => !actiononly.includes(op)),
+        actiononly,
         idf: entityIdField(ent),
         rk: recordKey(ent),
         rkoncreate: rkOnCreate(ent),
@@ -477,7 +492,8 @@ const Main = cmp(function Main(props: any) {
     .map((e: any) => ({
       ...e,
       cmds: Object.keys(CMD_OPS)
-        .filter((cmd) => CMD_OPS[cmd].some((op) => e.ops.includes(op))),
+        .filter((cmd) => CMD_OPS[cmd].some((op) => e.ops.includes(op)) ||
+          0 < Object.keys(e.actions[cmd] || {}).length),
     }))
     .filter((e: any) => 0 < e.cmds.length)
 
@@ -1134,6 +1150,26 @@ ${rows}
 
 `)
 
+      if (provider.entities.some((e: any) => 0 < e.actiononly.length)) {
+        Content(`  // An op whose every route is an action has no route of its own: the SDK
+  // would send that action for the plain call, so the plain call is refused.
+  function actiononly(entname: string, cmd: string, opname: string): never {
+    const own = Object.prototype.hasOwnProperty
+    const ents: any = own.call(ACTIONS, entname) ? ACTIONS[entname] : {}
+    const map: any = own.call(ents, cmd) ? ents[cmd] : {}
+    const acts = Object.keys(map).filter((name: string) => opname === map[name]).sort()
+
+    throw new Error(
+      '${provider.pkgName}: ' + entname + ' ' + cmd + ': this API has no ' +
+      opname + ' route for ' + entname + ', only the action' +
+      (1 < acts.length ? 's ' : ' ') + acts.join(', ') +
+      '. Name it with action\$ to call it.')
+  }
+
+
+`)
+      }
+
       Content(`  const entity: any = {
 `)
       each(provider.entities, (e: any) => {
@@ -1233,9 +1269,10 @@ ${call}      }
 ${actionBranch('list',
             `        const found = await this.shared.sdk.${e.acc}()[op$](${aq})
         return found.map((data: any) => entize(${out('data')}))
-`)}${guard('list', 'q')}      const list = await this.shared.sdk.${e.acc}().list(q)
+`)}${!e.ops.includes('list') ? `      return actiononly('${e.name}', 'list', 'list')
+` : `${guard('list', 'q')}      const list = await this.shared.sdk.${e.acc}().list(q)
       return list.map((data: any) => entize(${out('data')}))
-    }
+`}    }
 
 `)
         }
@@ -1248,14 +1285,15 @@ ${actionBranch('list',
 ${actionBranch('load',
             `        const hit = await ornull(() => this.shared.sdk.${e.acc}()[op$](${aq}))
         return null == hit ? null : entize(${out('hit')})
-`)}${guard('load', 'q')}${splitLine('load')}      const res = await ornull(() => this.shared.sdk.${e.acc}().load(${sdkArg('load')}))
+`)}${!e.ops.includes('load') ? `      return actiononly('${e.name}', 'load', 'load')
+` : `${guard('load', 'q')}${splitLine('load')}      const res = await ornull(() => this.shared.sdk.${e.acc}().load(${sdkArg('load')}))
 ${0 < addressKeys(e.ent, 'load').length || 0 < eparts.length ? '' :
             `      // The route names no record, so an id finds only the record carrying it.
       if (null != res && null != q.id && String(${jsProp('plain(res)', rk)}) !== String(q.id)) {
         return null
       }
 `}      return null == res ? null : entize(${out('res', loadVals)})
-    }
+`}    }
 
 `)
         }
@@ -1333,6 +1371,9 @@ ${dropPark}
           const call = (opname: string) =>
             `await sdk.${e.acc}(${entArg}).${opname}(data)`
 
+          const refusal = saveRefuses(e) ?
+            `actiononly('${e.name}', 'save', '${saveRefusedOp(e)}')` : ''
+
           const body = hasCreate && hasUpdate
             ? (!refuseUpdate ? `      let res
       if (${isUpdate}) {
@@ -1346,7 +1387,12 @@ ${refuse('update', '        ')}      }
 ${guard('create', 'data', 'save')}      const res = ${call('create')}`)
             : hasCreate
               ? `${guard('create', 'data', 'save')}      const res = ${call('create')}`
-              : `${refuse('update')}${guard('update', 'data', 'save')}      const res = ${call('update')}`
+              : !hasUpdate ? `      const res = ${refusal}`
+                : `${'' === refusal ? '' : `      if (${keyed ? 'null == key' : 'null == data.id'}) {
+        ${refusal}
+      }
+
+`}${refuse('update')}${guard('update', 'data', 'save')}      const res = ${call('update')}`
 
           Content(`
   ${jsProp('entity', e.name)}.cmd.save.action =
@@ -1377,7 +1423,8 @@ ${actionBranch('save',
 ${actionBranch('remove',
             `        const gone = await ornull(() => this.shared.sdk.${e.acc}()[op$](${aq}))
         return null == gone ? null : entize(${out('gone')})
-`)}${'' !== refuse('remove') ? refuse('remove') :
+`)}${!e.ops.includes('remove') ? `      actiononly('${e.name}', 'remove', 'remove')
+` : '' !== refuse('remove') ? refuse('remove') :
             `${guard('remove', 'q')}${splitLine('remove')}      await ornull(() => this.shared.sdk.${e.acc}().remove(${sdkArg('remove')}))
 `}      return null
     }

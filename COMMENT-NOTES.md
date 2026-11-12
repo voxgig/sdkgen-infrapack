@@ -8,6 +8,8 @@ An API-assigned `id` and a client-supplied key are different facts about a creat
 
 The name an unrelated API `id` is parked under is derived from the provider's own name, so an entity can already use it as a field, a parent path parameter or its own key. Where it does, nothing is parked and nothing is deleted from a write: the value belongs to the caller, and removing it strips a required parameter from every save.
 
+An operation whose every route is an action has no route of its own, and the SDK sends that action for the plain call. The provider treats such an operation as absent wherever it routes or documents a plain call, keeps the command while an action reaches it, and refuses the plain call by name. A save without an id names no record to update, so where the only create route is an action it is refused; with an id it still updates.
+
 Sources: [provider main](.sdk/src/cmp/seneca-provider/Main_seneca-provider.ts), [provider extras](.sdk/src/cmp/seneca-provider/Extras_seneca-provider.ts), [ignore-file generator](.sdk/src/cmp/seneca-provider/Gitignore_seneca-provider.ts).
 
 ## Postman collections

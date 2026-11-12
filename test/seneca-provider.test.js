@@ -20,7 +20,7 @@
 //     would test the fragment's plumbing rather than the function.
 
 const { test, describe, before, after } = require('node:test')
-const { ok, strictEqual, deepStrictEqual } = require('node:assert')
+const { ok, strictEqual, deepStrictEqual, rejects } = require('node:assert')
 
 const Fs = require('node:fs')
 const Path = require('node:path')
@@ -287,6 +287,14 @@ main: kit: entity: badge: {
       m: "POST", o: "/badge/{id}/award"
       s: [{ lit: "badge" }, { var: "id" }, { lit: "award" }]
       q: { '$action': "award", exist: [ "id" ] }
+      t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
+    remove: { name: "remove", points: [ {
+      g: {
+        params: [ { k: "param", n: "id", or: "id", r: true, t: "\`$STRING\`", ex: "b01" } ]
+      }
+      m: "POST", o: "/badge/{id}/retire"
+      s: [{ lit: "badge" }, { var: "id" }, { lit: "retire" }]
+      q: { '$action': "retire", exist: [ "id" ] }
       t: { req: "\`reqdata\`", res: "\`body\`" } } ] }
   }
 }
@@ -2042,11 +2050,12 @@ describe('seneca-provider target, from its package', () => {
   describe('actions', () => {
 
     let entity
+    let files
 
     before(async () => {
-      const { files } = await generateInto(consumer, {
+      files = (await generateInto(consumer, {
         model: consumerModel(consumer.sdk, ACTION_ENTITY + ACTION_ONLY_ENTITY),
-      })
+      })).files
       entity = loadProvider(files, 'demo-provider')
     })
 
@@ -2174,6 +2183,39 @@ describe('seneca-provider target, from its package', () => {
 
       deepStrictEqual(calls, [['Badge', 'update',
         { id: 'b1', reason: 'why', $action: 'award' }]])
+    })
+
+
+    // `award` is badge's only update route and `retire` its only remove, so a
+    // plain save$ or remove$ would send one of them unasked.
+    test('a plain call only an action could serve is refused, not sent', async () => {
+      const calls = []
+      await rejects(() => drive(entity, 'badge', 'save', saveMsg({ id: 'b1', reason: 'why' }), calls),
+        /badge save: this API has no update route for badge, only the action award\./)
+      await rejects(() => drive(entity, 'badge', 'remove', { q: { id: 'b1' }, ent: {} }, calls),
+        /badge remove: this API has no remove route for badge, only the action retire\./)
+      deepStrictEqual(calls, [])
+
+      await drive(entity, 'badge', 'remove', { q: { id: 'b1', action$: 'retire' }, ent: {} }, calls)
+      deepStrictEqual(calls, [['Badge', 'remove', { id: 'b1', $action: 'retire' }]])
+    })
+
+
+    test('the docs and suite offer no plain call only an action could serve', () => {
+      for (const cmd of ['save', 'remove']) {
+        ok(String(files['seneca-provider/README.md']).includes('cmd:' + cmd +
+          ',zone:provider,base:demo,name:badge` | Run an action named with `action$`. |'),
+        'the pattern table offers a plain ' + cmd + '$ on badge')
+      }
+      ok(String(files['seneca-provider/doc/reference.md']).includes(
+        'Throws unless `action$` names an action, as the only update route is the `award` action.'),
+      'the reference does not say a plain badge save$ throws')
+
+      const suite = String(files[Object.keys(files)
+        .find((p) => /test\/demo-provider\.test\.js$/.test(p))])
+      new Script(suite)
+      ok(suite.includes("it('badge-update-only-action'") &&
+        suite.includes("it('badge-remove-only-action'"), 'no refusal test for badge')
     })
 
 
@@ -3158,6 +3200,58 @@ describe('seneca-provider target, from its package', () => {
                   label + ' load after remove')
               }
             }
+          }
+        })
+
+
+        // Taxonomy's domain has no create route of its own: apidef files its
+        // `revoke` action as the create, which a plain save$ would send.
+        test('a create whose only route is an action is refused, not sent', async () => {
+          const { model, entity, sdk, Name, files } = built[def.api]
+          const docs = Object.entries(files)
+            .filter(([p]) => p.startsWith('seneca-provider/') && p.endsWith('.md'))
+          const refused = []
+
+          for (const [name, e] of Object.entries(entity)) {
+            const ent = model.main.kit.entity[name]
+            const points = ent.op?.create?.points || []
+            if (0 === points.length || points.some((p) => null == p.q?.['$action'])) continue
+
+            const acts = points.map((p) => p.q['$action'])
+            const parents = parentsOf(ent)
+            const seed = { ...recordOf(ent, parents), id: 'r1' }
+            const client = sdk.module[Name + 'SDK'].test({ entity: { [name]: { r1: seed } } })
+            const save = (data, extra) => e.cmd.save.action.call({ shared: { sdk: client } },
+              (d) => d, { q: {}, ent: { data$: () => ({ ...data }) }, ...(extra || {}) })
+
+            await rejects(() => save({ ...parents }), new RegExp(name +
+              ' save: this API has no create route for ' + name + ', only the action ' +
+              acts.join(', ') + '\\.'))
+
+            if (null != ent.op.update) {
+              const back = await save(seed)
+              strictEqual(String(back?.id), 'r1', def.api + ' ' + name + ' update')
+            }
+
+            for (const act of acts) {
+              await save({ ...parents, id: 'r1' }, { action$: act })
+                .catch((err) => ok(!/no create route|is not an action/.test(err.message),
+                  def.api + ' ' + name + ' ' + act + ' was refused: ' + err.message))
+            }
+
+            const make = new RegExp("\\.entity\\('provider/demo/" + name + "'\\)\\s*\\.make\\$\\(\\{(?![^}]*\\bid:)")
+            for (const [path, text] of docs) {
+              ok(!make.test(String(text)), path + ' creates a ' + name + ' with a plain save$')
+            }
+
+            refused.push(name)
+          }
+
+          if ('taxonomy' === def.api) {
+            deepStrictEqual(refused, ['domain'])
+            ok(String(files['seneca-provider/doc/reference.md']).includes('Updated `domain`; ' +
+              'without an id it throws, as the only create route is the `revoke` action.'),
+            'the reference does not say a plain domain save$ throws without an id')
           }
         })
       })

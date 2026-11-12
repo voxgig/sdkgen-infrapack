@@ -65,6 +65,34 @@ function cmdRefuses(e: any, cmd: string): boolean {
 }
 
 
+// A plain save$ with no id is refused where the API has no create of its own
+// and either its create is an action or no update would run instead.
+export function saveRefuses(e: any): boolean {
+  return !e.ops.includes('create') &&
+    ((e.actiononly || []).includes('create') || !e.ops.includes('update'))
+}
+
+
+export function saveRefusedOp(e: any): string {
+  return (e.actiononly || []).includes('create') ? 'create' : 'update'
+}
+
+
+// Why saveRefuses holds, as the docs say it.
+function onlyActions(e: any): string {
+  return ['create', 'update']
+    .filter((op: string) => (e.actiononly || []).includes(op))
+    .map((op: string) => {
+      const acts = e.actionList.filter((a: any) => op === a.op)
+        .map((a: any) => '`' + a.action + '`')
+      return 0 === acts.length ? `the API has no ${op} route of its own` :
+        1 === acts.length ? `the only ${op} route is the ${acts[0]} action` :
+          `the only ${op} routes are the ${acts.join(', ')} actions`
+    })
+    .join(', and ')
+}
+
+
 function parentName(e: any, key: string): string {
   const byKey = (e.parentOf || {})[key]
   if (null != byKey && '' !== byKey) {
@@ -719,7 +747,7 @@ describe('${provider.fileBase}', () => {
           // regex metacharacter, not just the slash, so a future separator
           // cannot reintroduce this.
           const shapeRe = regexLiteral(shape)
-          const cmd = ['load', 'remove', 'update'].find((op: string) =>
+          const cmd = ['load', 'remove', 'update'].find((op: string) => e.ops.includes(op) &&
             e.cmds.includes('remove' === op ? 'remove' : 'load' === op ? 'load' : 'save'))
 
           if (null != cmd) {
@@ -751,7 +779,7 @@ describe('${provider.fileBase}', () => {
 
         const guardOp = ['list', 'load', 'update', 'remove']
           .find((op: string) => (e.opParents[op] || []).includes(key) &&
-            !cmdRefuses(e, op))
+            e.ops.includes(op) && !cmdRefuses(e, op))
 
         // Not for a composite key: there is no separate parent guard to
         // trip, because the parents live inside the id. needs-full-id above
@@ -922,6 +950,36 @@ ${!loadHasKey(e) ? '' : `
     await assert.rejects(
       () => seneca.entity('provider/${provider.lower}/${e.name}').${call},
       /has no ${cmd} route for one ${e.name}/,
+    )
+  })
+
+`)
+        }
+      })
+
+
+      each(provider.entities, (e: any) => {
+        const pairs = parentPairs(e, false)
+        const refused: string[][] = []
+
+        if (e.cmds.includes('save') && saveRefuses(e)) {
+          refused.push([saveRefusedOp(e), `make$({ ${pairs}}).save$()`])
+        }
+        for (const cmd of ['list', 'load', 'remove']) {
+          if (e.cmds.includes(cmd) && e.actiononly.includes(cmd)) {
+            refused.push([cmd, 'list' === cmd ? `list$({ ${pairs}})` :
+              `${cmd}$({ ${pairs}id: '${entIdLiteral(e, '0')}' })`])
+          }
+        }
+
+        for (const [op, call] of refused) {
+          Content(`
+  it('${e.name}-${op}-only-action', async () => {
+    const seneca = await makeSeneca()
+
+    await assert.rejects(
+      () => seneca.entity('provider/${provider.lower}/${e.name}').${call},
+      /has no ${op} route for ${regexLiteral(e.name)}, only the action/,
     )
   })
 
@@ -1934,9 +1992,12 @@ whose logs cannot be read.
     each(provider.entities, (e: any) => {
       each(e.cmds, (cmd: any) => {
         const c = String(cmd.val$ ?? cmd)
-        const desc = 'save' !== c ? CMD_DESC[c] :
-          !e.ops.includes('update') ? 'Create a record' :
-            !e.ops.includes('create') ? 'Update a record' : CMD_DESC[c]
+        const plain = ('save' === c ? ['create', 'update'] : [c])
+          .some((op: string) => e.ops.includes(op))
+        const desc = !plain ? 'Run an action named with `action$`' :
+          'save' !== c ? CMD_DESC[c] :
+            !e.ops.includes('update') ? 'Create a record' :
+              !e.ops.includes('create') ? 'Update a record' : CMD_DESC[c]
         Content(`| \`sys:entity,cmd:${c},zone:provider,base:${provider.lower},name:${e.name}\` | ${desc}. |
 `)
       })
@@ -2176,10 +2237,11 @@ const DocTutorial = cmp(function DocTutorial(props: any) {
   const hasRead = subject.cmds.includes('list') || subject.cmds.includes('load')
   // Creating a record with nothing in it teaches nothing, so the write step
   // needs at least one field the caller actually supplies.
-  const canWrite = subject.cmds.includes('save') && 0 < plainFields.length
+  const canWrite = subject.cmds.includes('save') && !saveRefuses(subject) &&
+    0 < plainFields.length
   const canUpdate = canWrite && subject.ops.includes('update') &&
     0 < changeFields.length
-  const canRemove = canWrite && subject.cmds.includes('remove')
+  const canRemove = canWrite && subject.ops.includes('remove')
 
   const cmdList = subject.cmds.map((c: string) => '`' + c + '$`').join(', ')
 
@@ -2732,7 +2794,7 @@ const DocHowto = cmp(function DocHowto(props: any) {
       (a.parents.length - b.parents.length) || (b.cmds.length - a.cmds.length))[0]
 
   const forCmd = (cmd: string) => {
-    const able = ents.filter((e: any) => e.cmds.includes(cmd))
+    const able = ents.filter((e: any) => e.cmds.includes(cmd) && e.ops.includes(cmd))
     return able.find((e: any) => e === subject) ||
       able.find((e: any) => 0 === e.parents.length) ||
       able[0] || null
@@ -2981,7 +3043,8 @@ A \`load$\` of the same id afterwards answers \`null\`.` :
     // A nested entity that declares no cmds has nothing to demonstrate, so
     // prefer one that does; the error example needs a command that exists.
     const n = nested.find((e: any) => 0 < e.cmds.length) || nested[0]
-    const firstCmd = n.cmds[0] || 'list'
+    const firstCmd = n.cmds.find((c: string) =>
+      'save' === c ? !saveRefuses(n) : n.ops.includes(c)) || n.cmds[0] || 'list'
 
     sec(NESTED_TITLE, `Some resources live inside a parent, and the API path says so — the
 route for \`${n.name}\` is:
@@ -2998,16 +3061,16 @@ ${nested.map((e: any) =>
 
 For reads the keys go in the query; for writes they go in the data:
 
-\`\`\`js${n.cmds.includes('list') ? `
+\`\`\`js${n.ops.includes('list') ? `
 await seneca.entity('${canon(n)}').list$({ ${parentArgs(n)} })
-` : ''}${n.cmds.includes('load') ? `
+` : ''}${n.ops.includes('load') ? `
 await seneca.entity('${canon(n)}')
   .load$({ ${parentArgs(n)}, ${idf(n)}: '${n.name}0' })
-` : ''}${n.cmds.includes('save') ? `
+` : ''}${n.cmds.includes('save') && !saveRefuses(n) ? `
 await seneca.entity('${canon(n)}')
   .make$(${literal(createData(n))})
   .save$()
-` : ''}${n.cmds.includes('remove') ? `
+` : ''}${n.ops.includes('remove') ? `
 await seneca.entity('${canon(n)}')
   .remove$({ ${parentArgs(n)}, ${idf(n)}: '${n.name}0' })
 ` : ''}\`\`\`
@@ -3706,7 +3769,10 @@ before any request is made, rather than issuing one that would 404.
       }
       if (e.cmds.includes('save')) {
         Content(`| \`save$()\` | entity data${0 < e.parents.length ?
-          `, including ${keysAnd(e.parents)}` : ''} | ${hasCreate && hasUpdate ?
+          `, including ${keysAnd(e.parents)}` : ''} | ${saveRefuses(e) ? (hasUpdate ?
+            `Updated \`${e.name}\`; without an id it throws, as ${onlyActions(e)}.` :
+            `Throws unless \`action$\` names an action, as ${onlyActions(e)}.`) :
+            hasCreate && hasUpdate ?
             `Created or updated \`${e.name}\`.` : hasCreate ?
               `Created \`${e.name}\`; the API declares no update operation.` :
               `Updated \`${e.name}\`; the API declares no create operation.`} |
@@ -3834,7 +3900,10 @@ dispatch for ${1 === oneway.length ? 'it' : 'them'}:
 | ----- | -------------------- |
 `)
       each(oneway, (e: any) => {
-        Content(`| \`${canon(e)}\` | Always ${e.ops.includes('create') ? 'creates' : 'updates'}; the API declares no ${e.ops.includes('create') ? 'update' : 'create'} operation. |
+        Content(saveRefuses(e) ?
+          `| \`${canon(e)}\` | ${e.ops.includes('update') ? 'Updates; throws without an id' :
+            'Throws unless `action$` names an action'}, as ${onlyActions(e)}. |
+` : `| \`${canon(e)}\` | Always ${e.ops.includes('create') ? 'creates' : 'updates'}; the API declares no ${e.ops.includes('create') ? 'update' : 'create'} operation. |
 `)
       })
     }
@@ -4182,8 +4251,9 @@ const DocExplanation = cmp(function DocExplanation(props: any) {
   // Entities where `save` has nothing to dispatch on, because the API offers
   // only one of create/update. Worth naming: their `save$` ignores the id
   // rule the rest of this document explains.
-  const onesided = writable.filter((e: any) =>
+  const onesided = writable.filter((e: any) => !saveRefuses(e) &&
     !(e.ops.includes('create') && e.ops.includes('update')))
+  const refusing = writable.filter((e: any) => saveRefuses(e))
 
   const code = (s: string) => '`' + s + '`'
   const list = (names: string[]) => names.map(code).join(', ')
@@ -4315,6 +4385,19 @@ dispatch on, and \`save$\` means that operation whether an id is present or not:
 `)
       each(onesided, (e: any) => {
         Content(`- \`${e.name}\`: \`save$\` always ${e.ops.includes('create') ? 'creates' : 'updates'}
+`)
+      })
+      Content(`
+`)
+    }
+
+    if (0 < refusing.length) {
+      Content(`A plain \`save$\` that only an action could serve is refused, never sent:
+
+`)
+      each(refusing, (e: any) => {
+        Content(`- \`${e.name}\`: ${e.ops.includes('update') ? 'without an id it throws' :
+          'it throws unless `action$` names an action'}, as ${onlyActions(e)}
 `)
       })
       Content(`
