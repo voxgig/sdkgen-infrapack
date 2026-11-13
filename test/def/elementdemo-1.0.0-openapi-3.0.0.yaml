@@ -1,0 +1,715 @@
+openapi: 3.0.0
+info:
+  title: Periodic Table API
+  version: 1.0.0
+  description: The Periodic Table API. Elements, isotopes, groups and series.
+
+servers:
+  # The account id is part of every path (/api/<account-id>/...), so it
+  # belongs in the server URL as an OpenAPI server variable rather than as a
+  # path parameter repeated on all seventeen operations. A generated SDK
+  # takes a server variable as a CONSTRUCTION option and substitutes it into
+  # the base URL once; a path parameter would have to be passed again on
+  # every call.
+  #
+  # No default: there is no account this API can guess, and an empty default
+  # makes the variable required — the SDK then refuses to construct without
+  # one instead of issuing requests to a URL with a literal `{account_id}`
+  # in it.
+  - url: http://localhost:8902/api/{account_id}
+    variables:
+      account_id:
+        default: ''
+        description: The API account the client is operating as.
+
+# Every operation needs an access token, EXCEPT the exchange that issues one
+# (POST /auth/token, below), which clears this with `security: []`.
+#
+# The exchange is described here as an ordinary operation because it is part
+# of the contract: a client cannot authenticate without it, and its request
+# and response bodies are as much the API's surface as any element's. It is
+# not standard OAuth2 — the body is JSON rather than form-encoded, there is
+# no `grant_type`, and expiry is counted in requests rather than seconds — so
+# an `oauth2` security scheme with a `tokenUrl` would misdescribe it. A
+# bespoke credential exchange goes in `paths:`, which is where a client
+# generator can find it.
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/token:
+    post:
+      summary: Exchange a refresh token for an access token
+      operationId: issueAccessToken
+      description: >
+        Buy a short-lived access token with the account's long-lived refresh
+        token. The access token serves a fixed number of requests and is then
+        invalidated, so a client must be able to repeat this call.
+      # The one operation that must be callable WITHOUT a credential: it is
+      # what issues them. An empty `security` clears the global requirement.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /element:
+    get:
+      summary: List elements
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Element'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      summary: Create element
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Element'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Element'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /element/{element_id}:
+    get:
+      summary: Get element
+      parameters:
+        - name: element_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Element'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      summary: Update element
+      parameters:
+        - name: element_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Element'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Element'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      summary: Delete element
+      parameters:
+        - name: element_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /element/{element_id}/ionize:
+    post:
+      summary: Ionize element
+      parameters:
+        - name: element_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                charge:
+                  type: integer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  ion:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /element/{element_id}/isotope:
+    get:
+      summary: List isotopes of element
+      parameters:
+        - name: element_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Isotope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      summary: Create isotope
+      parameters:
+        - name: element_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Isotope'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Isotope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /element/{element_id}/isotope/{isotope_id}:
+    get:
+      summary: Get isotope
+      parameters:
+        - name: element_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: isotope_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Isotope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      summary: Update isotope
+      parameters:
+        - name: element_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: isotope_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Isotope'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Isotope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      summary: Delete isotope
+      parameters:
+        - name: element_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: isotope_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /element/{element_id}/isotope/{isotope_id}/decay:
+    post:
+      summary: Decay isotope
+      parameters:
+        - name: element_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: isotope_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                steps:
+                  type: integer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  mode:
+                    type: string
+                  product:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /group:
+    get:
+      summary: List groups
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Group'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /group/{group_id}:
+    get:
+      summary: Get group
+      parameters:
+        - name: group_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /series:
+    get:
+      summary: List series
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Series'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /series/{series_id}:
+    get:
+      summary: Get series
+      parameters:
+        - name: series_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Series'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        A short-lived access token, sent as `Authorization: Bearer <token>`.
+        Obtain one from POST /auth/token, which every client must be able to
+        call again: the token expires after a fixed number of REQUESTS rather
+        than after an interval, so `expires_in_requests` on the token
+        response — not a clock — says when the next exchange is due.
+
+  # One envelope for every failure, named once and referenced by each
+  # operation that can answer with it. A client generator reads these to
+  # decide what a failed call raises; without them a 401 is indistinguishable
+  # from a transport fault.
+  responses:
+    BadRequest:
+      description: The request body, path or query failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: >
+        The access token is missing, malformed, unknown, spent, or was issued
+        for another account. The fix is always the same: exchange the refresh
+        token for a new access token at POST /auth/token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: >
+        No record with that id — or no such route, which is what a write to a
+        read-only entity gets.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: A record with that id already exists.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalError:
+      description: The server failed to handle an otherwise valid request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      description: >
+        The single error envelope. Switch on the HTTP STATUS CODE; `error` is
+        a stable label for humans reading logs, and `message` is free text
+        that may change between releases.
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: PascalCase name of the error class.
+          enum:
+            - ValidationError
+            - AuthError
+            - NotFoundError
+            - ConflictError
+            - InternalServerError
+        message:
+          type: string
+          description: Human-readable detail. Not a stable contract.
+
+    TokenRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          description: >
+            The account's long-lived refresh token. A secret: it buys access
+            tokens and is never sent to any other path.
+
+    TokenResponse:
+      type: object
+      required:
+        - access_token
+        - token_type
+        - expires_in_requests
+      properties:
+        access_token:
+          type: string
+          description: 'Send as `Authorization: Bearer <access_token>`.'
+        token_type:
+          type: string
+          enum:
+            - Bearer
+        expires_in_requests:
+          type: integer
+          description: >
+            How many requests this access token serves before it is
+            invalidated. Deliberately NOT `expires_in`: this API counts
+            expiry in requests, not seconds, so the refresh path is exercised
+            on a known call rather than after an interval.
+
+    Element:
+      type: object
+      required:
+        - id
+        - name
+        - symbol
+        - number
+        - period
+        - block
+        - series_id
+        - mass
+      properties:
+        id:
+          type: string
+          description: Element identifier, the lowercase symbol.
+        name:
+          type: string
+          description: Element name.
+        symbol:
+          type: string
+          description: Chemical symbol.
+        number:
+          type: integer
+          description: Atomic number.
+        period:
+          type: integer
+          description: Periodic table row, 1 to 7.
+        block:
+          type: string
+          description: Orbital block, one of s, p, d, f.
+        series_id:
+          type: string
+          description: Chemical series this element belongs to.
+        mass:
+          type: number
+          format: float
+          description: Standard atomic weight in daltons.
+        group:
+          type: integer
+          description: Periodic table column, 1 to 18, absent for the f-block.
+        phase:
+          type: string
+          description: Phase at standard temperature and pressure.
+        discovered:
+          type: integer
+          description: Year of discovery, absent for elements known since antiquity.
+    Isotope:
+      type: object
+      required:
+        - id
+        - element_id
+        - name
+        - mass_number
+        - mass
+        - stable
+      properties:
+        id:
+          type: string
+          description: Isotope identifier, symbol dash mass number.
+        element_id:
+          type: string
+          description: Parent element identifier.
+        name:
+          type: string
+          description: Isotope name.
+        mass_number:
+          type: integer
+          description: Total protons and neutrons.
+        mass:
+          type: number
+          format: float
+          description: Isotopic mass in daltons.
+        stable:
+          type: boolean
+          description: True if the isotope is stable.
+        abundance:
+          type: number
+          format: float
+          description: Natural abundance as a fraction, absent for synthetic isotopes.
+        halflife:
+          type: string
+          description: Half-life, absent for stable isotopes.
+        mode:
+          type: string
+          description: Primary decay mode, absent for stable isotopes.
+        product:
+          type: string
+          description: Primary decay product isotope, absent for stable isotopes.
+    Group:
+      type: object
+      required:
+        - id
+        - number
+        - cas
+      properties:
+        id:
+          type: string
+          description: Group identifier, g1 to g18.
+        number:
+          type: integer
+          description: Group number, 1 to 18.
+        cas:
+          type: string
+          description: CAS group designation.
+        name:
+          type: string
+          description: Trivial name, where one exists.
+    Series:
+      type: object
+      required:
+        - id
+        - name
+        - color
+        - description
+      properties:
+        id:
+          type: string
+          description: Series identifier.
+        name:
+          type: string
+          description: Series name.
+        color:
+          type: string
+          description: Display color used by the element card renderer.
+        description:
+          type: string
+          description: One-line description of the series.

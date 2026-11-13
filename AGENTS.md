@@ -41,6 +41,10 @@ npm test             # the comment gate, the dependency gate, then the suite
 npm run check-package # this repo is itself an sdkgen package
 ```
 
+`npm install` also fetches the Postman CLI, a devDependency that brings a
+native binary of a few hundred megabytes for the platform. The `postman` suite
+skips its Postman checks, and says so, where that binary is missing.
+
 `package-lock.json` is gitignored rather than absent, so a fresh checkout and
 CI resolve dependencies anew, and a persistent checkout does not: npm writes
 the lock on the first install and reuses it while its versions still satisfy
@@ -78,6 +82,16 @@ manifest goes red at once rather than at `git add`.
 An exception goes in `tools/dep-gate.json` with a reason. The gate reports an
 entry carrying no reason, and an entry that has stopped matching anything, so
 the list cannot outlive what it excused.
+
+## Vendored API definitions
+
+`test/def/` holds API definitions copied from voxgig/apidef-validate, which the
+suite builds into models with apidef and generates every target from. They are
+never edited here: `npm run vendor-defs` (`tools/vendor-defs.cjs`) refreshes
+them, recording the commit and each file's sha256 in `test/def/vendor.json`,
+and `npm test` refuses a copy that no longer matches. Adding an API is an entry
+in that manifest's `apis` and a vendor run. The script needs git and network
+access to github.com; checking the copies needs neither.
 
 ## Source code comments
 

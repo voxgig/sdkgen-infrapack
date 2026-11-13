@@ -1,5 +1,5 @@
 
-.PHONY: comments comments-test deps deps-test hooks
+.PHONY: comments comments-test deps deps-test defs defs-check hooks
 comments:
 	node tools/comment-gate.cjs
 
@@ -11,6 +11,12 @@ deps:
 
 deps-test:
 	node --test tools/dep-gate.test.cjs
+
+defs:
+	node tools/vendor-defs.cjs
+
+defs-check:
+	node tools/vendor-defs.cjs --check
 
 hooks:
 	git config core.hooksPath .githooks

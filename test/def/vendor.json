@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "The API definitions the suite generates every target from, vendored from",
+    "voxgig/apidef-validate. Do not edit them here: change the upstream",
+    "definition, then run `npm run vendor-defs` (tools/vendor-defs.cjs). Each",
+    "entry in `apis` resolves to the highest-versioned OpenAPI or Swagger file",
+    "named for it in the upstream def/ folder at `ref`, and the rest of this",
+    "file records what that run fetched. The suite checks every file against",
+    "its sha256, so a hand edit fails the build."
+  ],
+  "source": "https://github.com/voxgig/apidef-validate",
+  "ref": "main",
+  "commit": "805193dff79d7deee07ada4a5f21265ccfe68b58",
+  "committed": "2026-11-09T18:00:41+00:00",
+  "apis": [
+    "solar",
+    "elementdemo",
+    "taxonomy"
+  ],
+  "defs": [
+    {
+      "api": "solar",
+      "file": "solar-1.0.0-openapi-3.0.0.yaml",
+      "version": "1.0.0",
+      "sha256": "b7c572a5a1e1e0741c71764cf82a60243ff0c17e77b8f3ad1ed13e2561c0c581"
+    },
+    {
+      "api": "elementdemo",
+      "file": "elementdemo-1.0.0-openapi-3.0.0.yaml",
+      "version": "1.0.0",
+      "sha256": "703a4d19bd5aa506a1098c9c971f9377308d70ea2b9419db0488d15fd4ef7745"
+    },
+    {
+      "api": "taxonomy",
+      "file": "taxonomy-1.0.0-openapi-3.1.0.yaml",
+      "version": "1.0.0",
+      "sha256": "d08acf665350c45d2ce4b1f535ebfe51c7426be1a8df49be099cb8c0101223b4"
+    }
+  ]
+}

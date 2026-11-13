@@ -1,7 +1,7 @@
 {
   "name": "@voxgig/sdkgen-infrapack",
-  "version": "0.0.19",
-  "description": "Infrastructure-provider targets for the Voxgig SDK Generator: Seneca provider.",
+  "version": "0.0.20",
+  "description": "Infrastructure targets for the Voxgig SDK Generator: Seneca provider, Postman collections.",
   "type": "commonjs",
   "license": "MIT",
   "keywords": [
@@ -10,7 +10,9 @@
     "sdkgen-package",
     "seneca",
     "seneca-provider",
-    "provider"
+    "provider",
+    "postman",
+    "postman-collection"
   ],
   "author": "Richard Rodger (http://richardrodger.com)",
   "repository": {
@@ -23,7 +25,7 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node tools/comment-gate.cjs && node tools/dep-gate.cjs && node --test tools/dep-gate.test.cjs && node --enable-source-maps --test test/*.test.js",
+    "test": "node tools/comment-gate.cjs && node tools/dep-gate.cjs && node --test tools/dep-gate.test.cjs tools/vendor-defs.test.cjs && node tools/vendor-defs.cjs --check && node --enable-source-maps --test test/*.test.js",
     "test-some": "node --enable-source-maps --test-name-pattern=\"$npm_config_pattern\" --test test/*.test.js",
     "watch": "tsc -w",
     "build": "tsc",
@@ -35,6 +37,7 @@
     "resset": "npm run reset",
     "check-cmp": "tsc -p tsconfig.json --noEmit",
     "check-package": "voxgig-sdkgen package check .",
+    "vendor-defs": "node tools/vendor-defs.cjs",
     "build:provider-test": "tsc --ignoreConfig --noCheck --noResolve --target ES2021 --module node16"
   },
   "_peer_comment": [
@@ -85,9 +88,12 @@
     "floor is a deliberate act and lowering it is a claim about what has been",
     "run; the lane is what settles either.",
     "",
-    "The floor is the first release that redacts credentials from everything",
-    "a generated SDK emits, which the provider suite asserts on an SDK error",
-    "thrown through the provider rather than skipping where it is absent.",
+    "The floor is the first release whose CLI starts against the newest",
+    "`shape`: earlier ones call `One`, which `shape` no longer exports, so a",
+    "fresh install of one cannot run `voxgig-sdkgen` at all. It also redacts",
+    "credentials from everything a generated SDK emits, which the provider",
+    "suite asserts on an SDK error thrown through the provider rather than",
+    "skipping where it is absent.",
     "",
     "This is a SEPARATE REPOSITORY, so there is no `file:` path back to the",
     "generator: the dependency is the published package, and that is the",
@@ -106,18 +112,32 @@
     "matching sdkgen's own pin: this is the kit's own dependency borrowed",
     "across a package boundary, so tracking what the kit is developed against",
     "beats resolving newest independently of it. An unused-dependency scan",
-    "will flag it; it is load-bearing."
+    "will flag it; it is load-bearing.",
+    "",
+    "postman-cli IS THE POSTMAN THE postman SUITE CHECKS AGAINST: its linter",
+    "judges the generated collections against Postman's own format, and its",
+    "runner sends them. It tracks the newest release on purpose, as the",
+    "collections target the current format, and a release that rejects them is",
+    "what the scheduled build is for. It installs a native binary of a few",
+    "hundred megabytes for the platform; the postman suite skips its Postman",
+    "checks where that binary is missing, and says so. Nothing in .sdk imports",
+    "it, so no consumer of this package installs it.",
+    "",
+    "yaml is how the suites read what they check: the generated collections,",
+    "and the vendored API definitions the stand-in server is built from."
   ],
   "peerDependencies": {
-    "@voxgig/apidef": ">=8.18.0",
-    "@voxgig/sdkgen": ">=4.33.0"
+    "@voxgig/apidef": ">=8.25.0",
+    "@voxgig/sdkgen": ">=4.41.1"
   },
   "devDependencies": {
-    "@voxgig/apidef": ">=8.18.0",
-    "@voxgig/sdkgen": ">=4.33.0",
+    "@types/node": ">=24",
+    "@voxgig/apidef": ">=8.25.0",
+    "@voxgig/sdkgen": ">=4.41.1",
     "aontu": ">=0.75.0",
     "memfs": "4.68.1",
+    "postman-cli": ">=1.88.0",
     "typescript": "7.0.2",
-    "@types/node": ">=24"
+    "yaml": "^2.9.1"
   }
 }
