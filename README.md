@@ -90,6 +90,14 @@ first look at the output.
 Set that in `model/project.aontu`, not in the target's own file — `target add`
 overwrites the latter.
 
+So the SDK repository does not publish the provider. With sdkgen 4.44.1 or
+later, its root README names the provider among its surfaces but leaves it out
+of the Packages table, and the SDK repository gets no publish workflow for it.
+The provider's own repository carries its README and its `publish.yml`. That
+is why the target declares no `publish.registry.package`: declaring one brings
+the Packages row back, and with it a second publish workflow in the SDK
+repository, for a package the provider already publishes.
+
 ## Or the provider carries its own builder
 
 The provider repository can instead hold a `.sdk/` of its own, which generates

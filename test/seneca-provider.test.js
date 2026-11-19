@@ -3204,8 +3204,9 @@ describe('seneca-provider target, from its package', () => {
         })
 
 
-        // Taxonomy's domain has no create route of its own: apidef files its
-        // `revoke` action as the create, which a plain save$ would send.
+        // Taxonomy's domain has no create route of its own. Its `revoke` action
+        // is either filed as the create, which a plain save$ would send, or
+        // joins its update.
         test('a create whose only route is an action is refused, not sent', async () => {
           const { model, entity, sdk, Name, files } = built[def.api]
           const docs = Object.entries(files)
@@ -3248,10 +3249,29 @@ describe('seneca-provider target, from its package', () => {
           }
 
           if ('taxonomy' === def.api) {
-            deepStrictEqual(refused, ['domain'])
-            ok(String(files['seneca-provider/doc/reference.md']).includes('Updated `domain`; ' +
-              'without an id it throws, as the only create route is the `revoke` action.'),
-            'the reference does not say a plain domain save$ throws without an id')
+            const domain = model.main.kit.entity.domain
+            const reference = String(files['seneca-provider/doc/reference.md'])
+            if (null != domain.op?.create) {
+              deepStrictEqual(refused, ['domain'])
+              ok(reference.includes('Updated `domain`; ' +
+                'without an id it throws, as the only create route is the `revoke` action.'),
+              'the reference does not say a plain domain save$ throws without an id')
+            }
+            else {
+              deepStrictEqual(refused, [])
+              ok((domain.op.update?.points || []).some((p) => 'revoke' === p.q?.['$action']),
+                'taxonomy domain has neither a create nor a revoke on its update')
+              ok(reference.includes('Updated `domain`; the API declares no create operation.'),
+                'the reference does not say domain has no create')
+
+              const parents = parentsOf(domain)
+              const seed = { ...recordOf(domain, parents), id: 'r1' }
+              const client = sdk.module[Name + 'SDK'].test({ entity: { domain: { r1: seed } } })
+              await entity.domain.cmd.save.action.call({ shared: { sdk: client } }, (d) => d,
+                { q: {}, ent: { data$: () => ({ ...parents, id: 'r1' }) }, action$: 'revoke' })
+                .catch((err) => ok(!/no create route|is not an action/.test(err.message),
+                  'taxonomy domain revoke was refused: ' + err.message))
+            }
           }
         })
       })
