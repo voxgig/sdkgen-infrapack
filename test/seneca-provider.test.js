@@ -3204,9 +3204,9 @@ describe('seneca-provider target, from its package', () => {
         })
 
 
-        // Taxonomy's domain has no create route of its own: apidef up to 8.32.1
-        // files its `revoke` action as the create, which a plain save$ would
-        // send; from 8.32.2 the action joins its update instead.
+        // Taxonomy's domain has no create route of its own. Its `revoke` action
+        // is either filed as the create, which a plain save$ would send, or
+        // joins its update.
         test('a create whose only route is an action is refused, not sent', async () => {
           const { model, entity, sdk, Name, files } = built[def.api]
           const docs = Object.entries(files)
